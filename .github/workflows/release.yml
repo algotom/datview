@@ -52,10 +52,9 @@ jobs:
         run: |
           conda install -y conda-build anaconda-client
           conda config --add channels conda-forge
-          conda install -y hdf5plugin
 
       - name: Build Conda Package
-        run: conda build recipe
+        run: conda build -c conda-forge
 
       - name: Upload to Anaconda Cloud
         env:
