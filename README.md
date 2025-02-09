@@ -28,7 +28,7 @@ DatView has been developed following a few key guidelines:
 -   Maximize functionality and maintainability.
 
 With these principles in mind, DatView was built using only a few dependencies:
--   h5py, Pillow, and Matplotlib.
+-   H5py, Hdf5Plugin, Pillow, and Matplotlib.
 -   The GUI components are built with Tkinter, a built-in Python library.
   - Matplotlib widgets are used to enhance interactivity while keeping the code minimal.
 
