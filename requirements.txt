@@ -1,0 +1,4 @@
+#python>=3.9
+h5py
+pillow
+matplotlib
