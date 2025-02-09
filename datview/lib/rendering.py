@@ -21,7 +21,7 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 # ==============================================================================
 
 
-FONT_SIZE = 10
+FONT_SIZE = 11
 FONT_WEIGHT = "normal"
 TTK_THEME = "clam"
 MAIN_WIN_RATIO = 0.8

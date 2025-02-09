@@ -1,5 +1,6 @@
 # DatView
-### <img src="icon.png" alt="DatView Logo" style="vertical-align:middle;"> (Dat)a (View)er software
+### (Dat)a (View)er software 
+<img src="icon.png" alt="DatView Logo">
 
 ---
 
@@ -45,16 +46,16 @@ Features
 
 -   Fast folder browsing and file listing.
 
-    <img src="figs/fig1.png" alt="Fig1" style="vertical-align:middle; width:800px;">
+    ![Fig1](https://github.com/algotom/datview/raw/main/figs/fig1.png)
 
 -   Viewing metadata in an HDF file or Cine file. Displaying the contents of a text file.
 
-    <img src="figs/fig2.png" alt="Fig2" style="vertical-align:middle; width:800px;">
+    ![Fig2](https://github.com/algotom/datview/raw/main/figs/fig2.png)
 
 -   Interactive viewing 1D, 2D, or 3D datasets in an HDF file. Supports ROI zooming, line profile 
     selection, contrast adjustment, and slicing along axis 0 and 1 
 
-    <img src="figs/fig3.png" alt="Fig3" style="vertical-align:middle; width:800px;">
+    ![Fig3](https://github.com/algotom/datview/raw/main/figs/fig3.png)
 
 -   Interactive viewing of TIF files in a folder or frames of a Cine file.
 -   Interactive viewing of an image (JPG, PNG, TIF,...)
@@ -63,7 +64,7 @@ Features
 -   Saving a 2D array in a 3D dataset of an HDF file or Cine file as an image.
 -   Saving a 1D or 2D dataset of an HDF file or the current line profile as a CSV file.
 
-    <img src="figs/fig4.png" alt="Fig4" style="vertical-align:middle; width:800px;">
+    ![Fig4](https://github.com/algotom/datview/raw/main/figs/fig4.png)
 
 Installation
 ============
