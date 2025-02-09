@@ -1,6 +1,6 @@
 # DatView
 ### (Dat)a (View)er software 
-<img src="icon.png" alt="DatView Logo">
+![Datview_Logo](https://github.com/algotom/datview/raw/main/icon.png)
 
 ---
 
