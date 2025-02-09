@@ -18,7 +18,7 @@ text files, and ImageJ for image viewing.
 
 This separation of tools is inconvenient, especially since many users are not familiar 
 with the Linux OS. **DatView** provides a unified GUI for all these tasks, improving 
-efficiency and user experience.
+efficiency and user experience. **DatView** runs across multiple operating systems.
 
 Design Philosophy
 =================
@@ -44,7 +44,8 @@ and Matplotlib.
 Features
 ========
 
--   Fast folder browsing and file listing.
+-   Fast folder browsing and file listing. Note that the GUI appears more visually 
+    refined on Windows OS compared to the demonstration below, which was captured on Red Hat Linux.
 
     ![Fig1](https://github.com/algotom/datview/raw/main/figs/fig1.png)
 
