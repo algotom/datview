@@ -3,6 +3,7 @@ import setuptools
 
 dependencies = [
     "h5py",
+    "hdf5plugin",
     "pillow",
     "matplotlib"
 ]
@@ -12,13 +13,14 @@ README = (HERE / "README.md").read_text()
 
 setuptools.setup(
     name="datview",
-    version="1.0.0",
+    version="1.1.0",
     author="Nghia Vo",
     author_email="nvo@bnl.gov",
-    description="GUI software for viewing images, text, HDF, and Cine files.",
+    description="GUI software for viewing images, text, cine, and HDF files.",
     long_description=README,
     long_description_content_type="text/markdown",
-    keywords=['HDF Viewer', 'NXS Viewer', 'Browser-based GUI'],
+    keywords=['HDF Viewer', 'CINE viewer', 'NXS Viewer', 'Image viewer',
+              "Data viewer"],
     url="https://github.com/algotom/datview",
     download_url="https://github.com/algotom/datview.git",
     license="Apache 2.0",

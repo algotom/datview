@@ -5,6 +5,7 @@ import platform
 import glob
 import struct
 import h5py
+import hdf5plugin
 import numpy as np
 from PIL import Image
 

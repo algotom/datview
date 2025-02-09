@@ -3,7 +3,7 @@ A single Python file for the DatView GUI software, used for folder browsing and
 viewing text, image, HDF, and Cine file formats.
 
 Users can copy this file and run it as:
-    python datview_mono.py
+    python datview.py
 
 Dependencies (must be installed before use): h5py, Pillow, matplotlib.
 """
@@ -23,6 +23,7 @@ import tkinter as tk
 import tkinter.font as tkFont
 from tkinter import ttk, filedialog, messagebox
 import h5py
+import hdf5plugin  # For viewing compressed HDF files
 import numpy as np
 from PIL import Image
 import matplotlib
@@ -496,7 +497,7 @@ class DatviewRendering(tk.Tk):
             MAIN_WIN_RATIO)
         self.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
         try:
-            icon = tk.PhotoImage(file="./datview_icon.png")
+            icon = tk.PhotoImage(file="./icon.png")
             self.iconphoto(True, icon)
         except tk.TclError:
             pass
