@@ -54,7 +54,7 @@ jobs:
           conda config --add channels conda-forge
 
       - name: Build Conda Package
-        run: conda build -c conda-forge
+        run: conda build recipe -c conda-forge
 
       - name: Upload to Anaconda Cloud
         env:
