@@ -29,6 +29,9 @@ jobs:
       - name: Build Conda Package
         run: conda build -c conda-forge recipe/
 
+      - name: Get Package Path
+        run: echo "PACKAGE_PATH=$(conda build --output recipe/)" >> $GITHUB_ENV
+
       - name: Upload to Anaconda Cloud
         env:
           ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_API_TOKEN }}
@@ -36,4 +39,4 @@ jobs:
           source $(conda info --base)/etc/profile.d/conda.sh
           conda activate base
           which anaconda
-          anaconda upload --user algotom /home/runner/miniconda3/conda-bld/**/datview-*.tar.bz2
+          anaconda upload --user algotom $PACKAGE_PATH
