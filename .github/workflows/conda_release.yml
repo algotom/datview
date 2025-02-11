@@ -23,7 +23,7 @@ jobs:
 
       - name: Install Conda Build Tools
         run: |
-          conda install -y conda-build anaconda-client
+          conda install -y conda-build anaconda-client conda-verify
           conda config --add channels conda-forge
 
       - name: Build Conda Package

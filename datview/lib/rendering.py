@@ -1,8 +1,8 @@
 import os
-import logging
 import json
-import importlib.resources
+import logging
 from pathlib import Path
+import importlib.resources
 import tkinter as tk
 import tkinter.font as tkFont
 from tkinter import ttk, messagebox
@@ -13,7 +13,10 @@ from matplotlib.widgets import Slider, RadioButtons
 from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,
                                                NavigationToolbar2Tk)
 import datview.lib.utilities as util
-matplotlib.use("TkAgg")
+if os.environ.get("DISPLAY") is None and os.environ.get("MPLBACKEND") is None:
+    matplotlib.use("Agg")
+else:
+    matplotlib.use("TkAgg")
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 # ==============================================================================

@@ -31,7 +31,7 @@ test:
   imports:
     - datview
   commands:
-    - MPLBACKEND=Agg datview --help
+    - datview --help
   requires:
     - pip
     - matplotlib-base
