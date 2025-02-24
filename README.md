@@ -70,7 +70,7 @@ Features
 Installation
 ============
 
-Install [Miniconda or Anaconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html), then 
+Install [Miniconda, Anaconda or Miniforge](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html), then 
 open a Linux terminal or the Miniconda/Anaconda PowerShell prompt and use the following commands
 for installation.
 
