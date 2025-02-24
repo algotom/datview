@@ -623,8 +623,12 @@ class DatviewRendering(tk.Tk):
         window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
         fig, ax = plt.subplots(figsize=(FIT_RATIO * width / self.dpi,
                                         FIT_RATIO * height / self.dpi))
+        img = np.asarray(img)
         if img.dtype != np.uint8:
             num = (img.max() - img.min())
+            if np.isnan(num):
+                img = np.nan_to_num(img)
+                num = (img.max() - img.min())
             if num != 0.0:
                 img = 255.0 * (img - img.min()) / num
             img = img.astype(np.uint8)
@@ -699,6 +703,9 @@ class DatviewRendering(tk.Tk):
 
         def normalize_image(img, min_val=0, max_val=255):
             nmin, nmax = np.min(img), np.max(img)
+            if np.isnan(nmin) or np.isnan(nmax):
+                img = np.nan_to_num(img)
+                nmin, nmax = np.min(img), np.max(img)
             if nmax != nmin:
                 img_norm = np.uint8(255.0 * (img - nmin) / (nmax - nmin))
                 img_norm = np.clip(img_norm, min_val, max_val)
