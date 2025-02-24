@@ -80,7 +80,7 @@ pip install datview
 ```
 Using conda:
 ```commandline
-conda install -c algotom datview
+conda install -c conda-forge datview
 ```
 Once installed, launching Datview with
 ```commandline
