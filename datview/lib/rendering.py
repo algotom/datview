@@ -218,436 +218,6 @@ class DatviewRendering(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open the file: {e}")
 
-    def show_2d_image(self, img, file_path=""):
-        """Display an image with sliders for adjusting contrast"""
-        width, height, x_offset, y_offset = self.define_window_geometry(
-            PLT_WIN_2D_RATIO)
-        window = tk.Toplevel(self)
-        window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        fig, ax = plt.subplots(figsize=(FIT_RATIO * width / self.dpi,
-                                        FIT_RATIO * height / self.dpi))
-        img = np.asarray(img)
-        if img.dtype != np.uint8:
-            num = (img.max() - img.min())
-            if np.isnan(num):
-                img = np.nan_to_num(img)
-                num = (img.max() - img.min())
-            if num != 0.0:
-                img = 255.0 * (img - img.min()) / num
-            img = img.astype(np.uint8)
-        img_plot = ax.imshow(img, cmap="gray", vmin=0, vmax=255)
-        ax.set_title(f"Height x Width : {img.shape[0]} x {img.shape[1]}")
-        fig.subplots_adjust(left=0.05, right=0.95, bottom=0.15, top=0.96)
-
-        slider_ax_min = fig.add_axes([0.2, 0.07, 0.6, 0.03])
-        min_slider = Slider(slider_ax_min, "Min", 0, 255, valinit=0, valstep=1)
-
-        slider_ax_max = fig.add_axes([0.2, 0.03, 0.6, 0.03])
-        max_slider = Slider(slider_ax_max, "Max", 0, 255, valinit=255,
-                            valstep=1)
-        fig.text(0.2, 0.015, file_path, horizontalalignment="left",
-                 verticalalignment="center", transform=fig.transFigure,
-                 fontsize=PLT_TEXT_FONTSIZE)
-
-        def update_contrast(val):
-            min_val = min_slider.val
-            max_val = max_slider.val
-            if min_val >= max_val:
-                if max_val > 0:
-                    min_val = max_val - 1
-                    min_slider.set_val(min_val)
-                else:
-                    max_val = 1
-                    min_val = 0
-                    max_slider.set_val(max_val)
-            img_plot.set_clim(vmin=min_val, vmax=max_val)
-            fig.canvas.draw_idle()
-
-        min_slider.on_changed(update_contrast)
-        max_slider.on_changed(update_contrast)
-
-        canvas = FigureCanvasTkAgg(fig, master=window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = NavigationToolbar2Tk(canvas, window)
-        toolbar.update()
-        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def show_1d_data(self, array_1d, help_text=None):
-        """Display a graph of 1d data."""
-        width, height, x_offset, y_offset = self.define_window_geometry(
-            PLT_WIN_1D_RATIO)
-        win = tk.Toplevel(self)
-        win.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        fig, ax = plt.subplots(figsize=((width / self.dpi) * FIT_RATIO,
-                                        (height / self.dpi) * FIT_RATIO))
-        ax.plot(array_1d, color="blue", linewidth=1.0)
-        ax.set_aspect("auto")
-        if help_text:
-            ax.set_title(help_text)
-        plt.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, master=win)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = NavigationToolbar2Tk(canvas, win)
-        toolbar.update()
-        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def interactive_viewer(self, file_path, file_type):
-        """
-        Display an image of a 3D array from a hdf file, cine file, or a folder
-        of tif files. Includes sliders to adjust contrast, view different
-        images, and a line-profile plot based on the mouse-clicked position.
-        """
-        clicked_point, hline, vline = None, None, None
-        depth, height, width = None, None, None
-        img, img_norm = None, None
-
-        def normalize_image(img, min_val=0, max_val=255):
-            nmin, nmax = np.min(img), np.max(img)
-            if np.isnan(nmin) or np.isnan(nmax):
-                img = np.nan_to_num(img)
-                nmin, nmax = np.min(img), np.max(img)
-            if nmax != nmin:
-                img_norm = np.uint8(255.0 * (img - nmin) / (nmax - nmin))
-                img_norm = np.clip(img_norm, min_val, max_val)
-            else:
-                img_norm = np.zeros(img.shape)
-            return img_norm
-
-        if file_type == "tif" or file_type == "cine":
-            if file_type == "tif":
-                list_files = util.find_file(file_path + "/*tif*")
-                img = util.load_image(list_files[0])
-                (height, width) = img.shape
-                depth = len(list_files)
-                current_path = list_files[0]
-            else:
-                cine_metadata = util.get_metadata_cine(file_path)
-                width = cine_metadata["biWidth"]
-                height = cine_metadata["biHeight"]
-                depth = cine_metadata["TotalImageCount"]
-                img = util.extract_frame_cine(file_path, 0)
-                current_path = file_path
-
-            settings = self.define_window_geometry(PLT_WIN_3D_RATIO)
-            win_width, win_height, x_offset, y_offset = settings
-            fig, ax = plt.subplots(1, 2,
-                                   figsize=(FIT_RATIO * win_width / self.dpi,
-                                            FIT_RATIO * win_height / self.dpi),
-                                   gridspec_kw={"width_ratios": [1.35, 1],
-                                                "wspace": 0.15})
-            fig.canvas.manager.window.wm_geometry(
-                f"{win_width}x{win_height}+{x_offset}+{y_offset}")
-            plt.subplots_adjust(bottom=0.15, left=0.05, right=0.95, top=0.96)
-            ax[0].set_title(
-                f"Axis: {0}. Index: {0}. Height x Width: {height} x {width}")
-            ax[0].set_xlabel("X")
-            ax[0].set_ylabel("Y")
-            ax[0].set_aspect("equal")
-            ax[1].set_aspect("auto")
-            img_norm = normalize_image(img)
-            slice0 = ax[0].imshow(img_norm, cmap="gray")
-            slider_ax0 = fig.add_axes([0.12, 0.06, 0.65, 0.03])
-            min_slider_ax = fig.add_axes([0.12, 0.03, 0.30, 0.03])
-            max_slider_ax = fig.add_axes([0.47, 0.03, 0.30, 0.03])
-            slider0 = Slider(slider_ax0, "Axis 0", 0, depth - 1, valinit=0,
-                             valstep=1)
-            slider1 = None
-            message_text = plt.text(0.12, 0.015, current_path,
-                                    horizontalalignment="left",
-                                    verticalalignment="center",
-                                    transform=fig.transFigure,
-                                    fontsize=PLT_TEXT_FONTSIZE)
-        else:
-            selected_index = self.file_list_view.curselection()
-            selected_file = self.file_list_view.get(selected_index[0])
-            full_path = os.path.join(self.selected_folder_path, selected_file)
-            hdf_key_path = self.hdf_key_list.get().strip()
-            try:
-                data = util.load_hdf(full_path, hdf_key_path)
-            except Exception as e:
-                messagebox.showerror("Can't read file",
-                                     f"File: {selected_file}\nError: {e}")
-                return
-            if len(data.shape) > 3 or len(data.shape) == 0:
-                messagebox.showerror("Can't show data",
-                                     f"File: {selected_file}\nOnly can "
-                                     f"show 1d, 2d, or 3d data. "
-                                     f"Not {len(data.shape)}d")
-                return
-            hdf_full_path = full_path
-            if 1 in data.shape:
-                data = np.squeeze(data)
-            if len(data.shape) == 1:
-                self.current_table = data[:]
-                self.show_1d_data(self.current_table, help_text=hdf_key_path)
-                return
-            elif len(data.shape) == 2:
-                self.current_table = data[:]
-                self.show_2d_image(self.current_table, hdf_full_path)
-                return
-            else:
-                (depth, height, width) = data.shape
-                settings = self.define_window_geometry(PLT_WIN_3D_RATIO)
-                win_width, win_height, x_offset, y_offset = settings
-                fig_width = FIT_RATIO * win_width / self.dpi
-                fig_height = FIT_RATIO * win_height / self.dpi
-                fig, ax = plt.subplots(1, 2,
-                                       figsize=(fig_width, fig_height),
-                                       gridspec_kw={"width_ratios": [1.35, 1],
-                                                    "wspace": 0.15})
-                plt.subplots_adjust(bottom=0.18, left=0.05, right=0.95,
-                                    top=0.96)
-                ax[0].set_title(f"Axis: {0}. Index: {0}. Height x Width:"
-                                f" {height} x {width}")
-                ax[0].set_xlabel("X")
-                ax[0].set_ylabel("Y")
-                ax[0].set_aspect("equal")
-                ax[-1].set_aspect("auto")
-                img = data[0, :, :]
-                img_norm = normalize_image(img)
-                slice0 = ax[0].imshow(img_norm, cmap="gray")
-                slider_ax0 = fig.add_axes([0.12, 0.09, 0.65, 0.03])
-                slider_ax1 = fig.add_axes([0.12, 0.06, 0.65, 0.03])
-                min_slider_ax = fig.add_axes([0.12, 0.03, 0.30, 0.03])
-                max_slider_ax = fig.add_axes([0.47, 0.03, 0.30, 0.03])
-                radio_button = fig.add_axes([0.85, 0.06, 0.1, 0.06])
-                slider0 = Slider(slider_ax0, "Axis 0", 0, depth - 1, valinit=0,
-                                 valstep=1)
-                slider1 = Slider(slider_ax1, "Axis 1", 0, height - 1, valinit=0,
-                                 valstep=1)
-                axis_selector = RadioButtons(radio_button, ["axis 0", "axis 1"],
-                                             active=0)
-                message_text = plt.text(0.12, 0.015, hdf_full_path,
-                                        horizontalalignment="left",
-                                        verticalalignment="center",
-                                        transform=fig.transFigure,
-                                        fontsize=PLT_TEXT_FONTSIZE)
-                slider1.set_active(False)
-                self.current_image = img
-
-        def update_slider():
-            nonlocal depth, height, width
-            if slider1 is not None:
-                if axis_selector.value_selected == "axis 0":
-                    slider0.set_active(True)
-                    slider1.reset()
-                    slider1.set_active(False)
-                    ax[0].set_title(f"Axis: {0}. Index: {0}. "
-                                    f"Height x Width: {height} x {width}")
-                else:
-                    slider0.reset()
-                    slider0.set_active(False)
-                    slider1.set_active(True)
-                    ax[0].set_title(f"Axis: {1}. Index: {0}. "
-                                    f"Height x Width: {depth} x {width}")
-
-        min_slider = Slider(min_slider_ax, "Min", 0, 255, valinit=0, valstep=1)
-        max_slider = Slider(max_slider_ax, "Max", 0, 255, valinit=255,
-                            valstep=1)
-
-        def update_contrast(event):
-            nonlocal img, img_norm
-            if slider1 is not None:
-                update_slider()
-            min_val = int(min_slider.val)
-            max_val = int(max_slider.val)
-            if min_val >= max_val:
-                if max_val > 0:
-                    min_val = max_val - 1
-                    min_slider.set_val(min_val)
-                else:
-                    min_val, max_val = 0, 1
-                    max_slider.set_val(max_val)
-                    min_slider.set_val(min_val)
-            if file_type == "tif":
-                index = int(slider0.val)
-                img = util.load_image(list_files[index])
-            elif file_type == "cine":
-                index = int(slider0.val)
-                img = util.extract_frame_cine(file_path, index)
-            else:
-                if axis_selector.value_selected == "axis 0":
-                    index = int(slider0.val)
-                    img = data[index, :, :]
-                    slice0.set_extent([0, width, height, 0])
-                else:
-                    index = int(slider1.val)
-                    img = data[:, index, :]
-                    slice0.set_extent([0, width, depth, 0])
-            img_norm = normalize_image(img, min_val=min_val, max_val=max_val)
-            slice0.set_clim(vmin=min_val, vmax=max_val)
-            slice0.set_data(img_norm)
-            fig.canvas.draw_idle()
-            self.current_image = img
-
-        def update_axis(val, axis=0):
-            nonlocal depth, height, width, img, img_norm
-            nonlocal clicked_point, hline, vline
-            index = int(slider0.val if axis == 0 else slider1.val)
-            min_val = int(min_slider.val)
-            max_val = int(max_slider.val)
-            if axis == 0:
-                ax[0].set_title(f"Axis: {axis}. Index: {index}. "
-                                f"Height x Width: {height} x {width}")
-            else:
-                ax[0].set_title(f"Axis: {axis}. Index: {index}. "
-                                f"Height x Width: {depth} x {width}")
-            if file_type == "tif":
-                img = util.load_image(list_files[index])
-                img_norm = normalize_image(img, min_val, max_val)
-                message_text.set_text(list_files[index])
-                (new_height, new_width) = img.shape
-                if new_height != height or new_width != width:
-                    slice0.set_extent([0, new_width, new_height, 0])
-                    height, width = new_height, new_width
-            elif file_type == "cine":
-                img = util.extract_frame_cine(file_path, index)
-                img_norm = normalize_image(img, min_val, max_val)
-                message_text.set_text(file_path)
-            else:
-                if axis == 0:
-                    img = data[index, :, :]
-                    img_norm = normalize_image(img)
-                    slice0.set_extent([0, width, height, 0])
-                else:
-                    img = data[:, index, :]
-                    img_norm = normalize_image(img)
-                    slice0.set_extent([0, width, depth, 0])
-            slice0.set_data(img_norm)
-            ax[-1].clear()
-            if hline:
-                hline.set_visible(False)
-            if vline:
-                vline.set_visible(False)
-            clicked_point, hline, vline = None, None, None
-            self.current_image = img
-            fig.canvas.draw_idle()
-
-        def reset_sliders(event):
-            min_slider.reset()
-            max_slider.reset()
-            slice0.autoscale()
-            fig.canvas.draw_idle()
-
-        slider0.on_changed(lambda v: update_axis(v, axis=0))
-        if slider1 is not None:
-            slider1.on_changed(lambda v: update_axis(v, axis=1))
-            axis_selector.on_clicked(update_contrast)
-        min_slider.on_changed(update_contrast)
-        max_slider.on_changed(update_contrast)
-
-        def on_scroll(event):
-            if event.inaxes == ax[0]:
-                if slider1 is not None:
-                    if axis_selector.value_selected == "axis 0":
-                        step = slider0.valstep if slider0.valstep else 1
-                        current_val = slider0.val
-                        sensitivity = SCROLL_SENSITIVITY
-                        new_val = current_val + event.step * step * sensitivity
-                        new_val = max(min(new_val, slider0.valmax),
-                                      slider0.valmin)
-                        slider0.set_val(new_val)
-                    else:
-                        step = slider1.valstep if slider1.valstep else 1
-                        current_val = slider1.val
-                        sensitivity = SCROLL_SENSITIVITY
-                        new_val = current_val + event.step * step * sensitivity
-                        new_val = max(min(new_val, slider1.valmax),
-                                      slider1.valmin)
-                        slider1.set_val(new_val)
-                else:
-                    step = slider0.valstep if slider0.valstep else 1
-                    current_val = slider0.val
-                    sensitivity = SCROLL_SENSITIVITY
-                    new_val = current_val + event.step * step * sensitivity
-                    new_val = max(min(new_val, slider0.valmax), slider0.valmin)
-                    slider0.set_val(new_val)
-
-        fig.canvas.mpl_connect("scroll_event", on_scroll)
-
-        def update_intensity_plot_hor():
-            nonlocal img, clicked_point
-            axis = 1
-            if clicked_point is not None:
-                y, x = clicked_point
-                index = int(slider0.val)
-                if file_type == "tif":
-                    if img is None:
-                        img = util.load_image(list_files[index])
-                elif file_type == "cine":
-                    if img is None:
-                        img = util.extract_frame_cine(file_path, index)
-                else:
-                    if img is None:
-                        img = data[index]
-                ax[axis].clear()
-                self.current_table = img[y, :]
-                ax[axis].plot(self.current_table, color="blue", linewidth=0.8)
-                ax[axis].set_title(f"Intensity at row: {y}",
-                                   fontsize=PLT_MAIN_FONTSIZE)
-                ax[axis].set_xlabel("X", fontsize=PLT_MAIN_FONTSIZE)
-                fig.canvas.draw_idle()
-
-        def update_intensity_plot_ver():
-            nonlocal img, clicked_point
-            axis = 1
-            if clicked_point is not None:
-                y, x = clicked_point
-                index = int(slider0.val)
-                if file_type == "tif":
-                    if img is None:
-                        img = util.load_image(list_files[index])
-                elif file_type == "cine":
-                    if img is None:
-                        img = util.extract_frame_cine(file_path, index)
-                else:
-                    if img is None:
-                        img = data[index]
-                ax[axis].clear()
-                self.current_table = img[:, x]
-                ax[axis].plot(self.current_table, color="blue", linewidth=0.8)
-                ax[axis].set_title(f"Intensity at column: {x}",
-                                   fontsize=PLT_MAIN_FONTSIZE)
-                ax[axis].set_xlabel("Y")
-                fig.canvas.draw_idle()
-
-        def plot_intensity_along_clicked_point(event):
-            nonlocal clicked_point, hline, vline
-            if event.inaxes == ax[0]:
-                clicked_point = (int(event.ydata), int(event.xdata))
-                if hline is not None:
-                    hline.set_visible(False)
-                    hline = None
-                if vline is not None:
-                    vline.set_visible(False)
-                    vline = None
-                if event.button == 1:
-                    hline = ax[0].axhline(clicked_point[0], color="red")
-                    update_intensity_plot_hor()
-                elif event.button == 3:
-                    vline = ax[0].axvline(clicked_point[1], color="red")
-                    update_intensity_plot_ver()
-
-        fig.canvas.mpl_connect("button_press_event",
-                               plot_intensity_along_clicked_point)
-
-        top_window = tk.Toplevel(self)
-        top_window.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
-        canvas = FigureCanvasTkAgg(fig, master=top_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar_frame = tk.Frame(top_window)
-        toolbar_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
-        toolbar.update()
-        toolbar.pack(side=tk.LEFT, fill=tk.X)
-        tk_reset_button = ttk.Button(toolbar_frame, text="Reset",
-                                     command=lambda: reset_sliders(None))
-        tk_reset_button.pack(side=tk.RIGHT, padx=10)
-
     def table_viewer(self, data):
         """Display 1d or 2d-data as table format"""
         window = tk.Toplevel(self)
@@ -715,3 +285,620 @@ class DatviewRendering(tk.Tk):
         display_array_as_text()
         window.grid_rowconfigure(0, weight=1)
         window.grid_columnconfigure(0, weight=1)
+
+    def show_2d_image(self, img, file_path=""):
+        """
+        Display an image with sliders for adjusting contrast
+        """
+        self.current_image = np.asarray(img)
+        is_color = False
+        if (self.current_image.ndim == 3
+                and self.current_image.shape[2] in [3, 4]):
+            is_color = True
+            nmin, nmax = np.min(self.current_image), np.max(self.current_image)
+            if nmax - nmin > 0:
+                self.current_image = (self.current_image - nmin) / (nmax - nmin)
+            self.current_image = np.clip(self.current_image, 0.0, 1.0)
+        if np.isnan(self.current_image).any():
+            self.current_image = np.nan_to_num(self.current_image)
+
+        settings = self.define_window_geometry(PLT_WIN_2D_RATIO)
+        win_width, win_height, x_offset, y_offset = settings
+
+        min_contrast_var = tk.DoubleVar(value=0.0)
+        max_contrast_var = tk.DoubleVar(value=1.0)
+        min_contrast_label_var = tk.StringVar(value="0")
+        max_contrast_label_var = tk.StringVar(value="100")
+
+        top_window = tk.Toplevel(self)
+        top_window.title(f"Viewing: {os.path.basename(file_path)}")
+        top_window.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
+        top_window.message_text_var = tk.StringVar(value=file_path)
+
+        try:
+            dpi = top_window.winfo_fpixels("1i") + 20
+        except:
+            dpi = 96
+        try:
+            default_font = tkFont.nametofont("TkDefaultFont")
+            font_family = default_font.cget("family")
+            plt.rcParams.update({'font.family': font_family,
+                                 'font.size': FONT_SIZE})
+        except:
+            pass
+
+        top_window.rowconfigure(0, weight=1)
+        top_window.rowconfigure(1, weight=0)
+        top_window.rowconfigure(2, weight=0)
+        top_window.columnconfigure(0, weight=1)
+
+        canvas_frame = ttk.Frame(top_window)
+        canvas_frame.grid(row=0, column=0, sticky="nsew")
+        control_frame = ttk.Frame(top_window)
+        control_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
+        status_frame = ttk.Frame(top_window, relief=tk.SUNKEN, borderwidth=1)
+        status_frame.grid(row=2, column=0, sticky="ew")
+        status_frame.rowconfigure(0, weight=1)
+        status_frame.columnconfigure(0, weight=1)
+        message_label = ttk.Label(status_frame,
+                                  textvariable=top_window.message_text_var,
+                                  wraplength=win_width, anchor=tk.W)
+        message_label.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
+        fig_img, ax_img = plt.subplots(constrained_layout=True, dpi=dpi)
+        ax_img.set_title(f"Height x Width : {self.current_image.shape[0]} "
+                         f"x {self.current_image.shape[1]}")
+        ax_img.set_xlabel("X")
+        ax_img.set_ylabel("Y")
+        ax_img.set_aspect("equal")
+
+        if is_color:
+            slice0 = ax_img.imshow(self.current_image)
+        else:
+            vmin_init = np.percentile(self.current_image, 0)
+            vmax_init = np.percentile(self.current_image, 100)
+            slice0 = ax_img.imshow(self.current_image, cmap="gray",
+                                   vmin=vmin_init, vmax=vmax_init)
+
+        canvas_frame.rowconfigure(0, weight=1)
+        canvas_frame.rowconfigure(1, weight=0)
+        canvas_frame.columnconfigure(0, weight=1)
+        top_window.update_idletasks()
+        canvas_img = FigureCanvasTkAgg(fig_img, master=canvas_frame)
+        canvas_img.draw()
+        canvas_img.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        toolbar_frame = ttk.Frame(canvas_frame)
+        toolbar_frame.grid(row=1, column=0, sticky="ew")
+        toolbar_frame.columnconfigure(0, weight=1)
+        toolbar = NavigationToolbar2Tk(canvas_img, toolbar_frame)
+        toolbar.update()
+        toolbar.grid(row=0, column=0, sticky="ew")
+
+        if not is_color:
+            control_frame.columnconfigure(0, weight=0)
+            control_frame.columnconfigure(1, weight=1)
+            control_frame.columnconfigure(2, weight=0)
+            control_frame.columnconfigure(3, weight=0)
+            control_frame.columnconfigure(4, weight=1)
+            control_frame.columnconfigure(5, weight=0)
+            control_frame.columnconfigure(6, weight=0)
+            control_frame.rowconfigure(0, weight=0)
+
+            ttk.Label(control_frame,
+                      text="Min %:").grid(row=0, column=0, sticky='e',
+                                          padx=(10, 5), pady=2)
+            min_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
+                                   orient=tk.HORIZONTAL,
+                                   variable=min_contrast_var)
+            min_slider.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
+            min_label = ttk.Label(control_frame,
+                                  textvariable=min_contrast_label_var, width=4)
+            min_label.grid(row=0, column=2, sticky='w', padx=(0, 10))
+
+            ttk.Label(control_frame,
+                      text="Max %:").grid(row=0, column=3, sticky='e',
+                                          padx=(10, 5), pady=2)
+            max_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
+                                   orient=tk.HORIZONTAL,
+                                   variable=max_contrast_var)
+            max_slider.grid(row=0, column=4, sticky='ew', padx=5, pady=2)
+            max_label = ttk.Label(control_frame,
+                                  textvariable=max_contrast_label_var, width=4)
+            max_label.grid(row=0, column=5, sticky='w', padx=(0, 10))
+
+            reset_button = ttk.Button(control_frame, text="Reset")
+            reset_button.grid(row=0, column=6, sticky='w', padx=10, pady=10)
+
+        if not is_color:
+            def on_contrast_change(value):
+                if self.current_image is None:
+                    return
+                min_val = min_contrast_var.get()
+                max_val = max_contrast_var.get()
+                p_min = min_val * 100.0
+                p_max = max_val * 100.0
+                min_contrast_label_var.set(f"{int(p_min)}")
+                max_contrast_label_var.set(f"{int(p_max)}")
+                if p_min >= p_max:
+                    if p_max > 0.0:
+                        p_min = p_max - 0.1
+                        min_contrast_var.set(p_min / 100.0)
+                    else:
+                        p_min, p_max = 0.0, 0.1
+                        min_contrast_var.set(0.0)
+                        max_contrast_var.set(0.001)
+                vmin = np.percentile(self.current_image, p_min)
+                vmax = np.percentile(self.current_image, p_max)
+                if vmin == vmax:  # Handle flat data
+                    vmin = vmin - 0.5
+                    vmax = vmax + 0.5
+                slice0.set_clim(vmin, vmax)
+                canvas_img.draw_idle()
+
+            def reset_contrast(event=None):
+                """
+                Resets the contrast sliders and updates the image.
+                """
+                min_contrast_var.set(0.0)
+                max_contrast_var.set(1.0)
+                on_contrast_change(None)
+
+        if not is_color:
+            min_slider.config(command=on_contrast_change)
+            max_slider.config(command=on_contrast_change)
+            reset_button.config(command=reset_contrast)
+
+    def interactive_viewer(self, file_path, file_type):
+        """
+        Display an image of a 3D array from a hdf file, cine file, or a folder
+        of tif files. Includes sliders to adjust contrast, view different
+        images, and a line-profile plot based on the mouse-clicked position.
+        """
+        clicked_point, hline, vline = None, None, None
+        img, data = None, None
+        slider1 = None
+        list_files = []
+
+        if file_type == "tif":
+            list_files = util.find_file(file_path + "/*tif*")
+            if not list_files:
+                messagebox.showerror("No Files",
+                                     f"No TIF files found in: {file_path}")
+                return
+            img = util.load_image(list_files[0])
+            (height, width) = img.shape
+            depth = len(list_files)
+            current_path = file_path
+
+        elif file_type == "cine":
+            cine_metadata = util.get_metadata_cine(file_path)
+            width = cine_metadata["biWidth"]
+            height = cine_metadata["biHeight"]
+            depth = cine_metadata["TotalImageCount"]
+            img = util.extract_frame_cine(file_path, 0)
+            current_path = file_path
+
+        else:  # HDF5
+            selected_index = self.file_list_view.curselection()
+            selected_file = self.file_list_view.get(selected_index[0])
+            full_path = os.path.join(self.selected_folder_path, selected_file)
+            hdf_key_path = self.hdf_key_list.get().strip()
+            try:
+                data = util.load_hdf(full_path, hdf_key_path)
+            except Exception as e:
+                messagebox.showerror("Can't read file",
+                                     f"File: {selected_file}\nError: {e}")
+                return
+
+            if 1 in data.shape:
+                data = np.squeeze(data)
+
+            if len(data.shape) == 1:
+                self.current_table = data[:]
+                self.show_1d_data(self.current_table, help_text=hdf_key_path)
+                return
+            elif len(data.shape) == 2:
+                self.current_table = data[:]
+                self.show_2d_image(self.current_table, full_path)
+                return
+            elif len(data.shape) != 3:
+                messagebox.showerror("Can't show data",
+                                     f"File: {selected_file}\nOnly can "
+                                     f"show 1d, 2d, or 3d data. "
+                                     f"Not {len(data.shape)}d")
+                return
+
+            (depth, height, width) = data.shape
+            img = data[0, :, :]
+            current_path = full_path
+
+        self.current_image = img
+        settings = self.define_window_geometry(PLT_WIN_3D_RATIO)
+        win_width, win_height, x_offset, y_offset = settings
+
+        message_text_var = tk.StringVar(value=current_path)
+        axis_var = tk.StringVar(value="axis 0")
+        slice0_var = tk.IntVar(value=0)
+        slice1_var = tk.IntVar(value=0)
+        min_contrast_var = tk.DoubleVar(value=0.0)
+        max_contrast_var = tk.DoubleVar(value=1.0)
+
+        slice0_label_var = tk.StringVar(value="0")
+        slice1_label_var = tk.StringVar(value="0")
+        min_contrast_label_var = tk.StringVar(value="0")
+        max_contrast_label_var = tk.StringVar(value="100")
+
+        top_window = tk.Toplevel(self)
+        top_window.title(f"Viewing: {os.path.basename(current_path)}")
+        top_window.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
+
+        try:
+            dpi = top_window.winfo_fpixels("1i") + 20
+        except:
+            dpi = 96
+        try:
+            default_font = tkFont.nametofont("TkDefaultFont")
+            font_family = default_font.cget("family")
+            plt.rcParams.update(
+                {'font.family': font_family, 'font.size': FONT_SIZE})
+        except:
+            pass
+
+        # --- Configure top_window's grid ---
+        top_window.rowconfigure(0, weight=1)
+        top_window.rowconfigure(1, weight=0)
+        top_window.rowconfigure(2, weight=0)
+        top_window.columnconfigure(0, weight=1)
+
+        # --- Create and grid the frames ---
+        canvas_frame = ttk.Frame(top_window)
+        canvas_frame.grid(row=0, column=0, sticky="nsew")
+
+        control_frame = ttk.Frame(top_window)
+        control_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
+
+        status_frame = ttk.Frame(top_window, relief=tk.SUNKEN, borderwidth=1)
+        status_frame.grid(row=2, column=0, sticky="ew")
+        status_frame.rowconfigure(0, weight=1)
+        status_frame.columnconfigure(0, weight=1)
+
+        message_label = ttk.Label(status_frame, textvariable=message_text_var,
+                                  wraplength=win_width - 100, anchor=tk.W)
+        message_label.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
+
+        # Setup Matplotlib Figures
+        canvas_frame.rowconfigure(0, weight=1)
+        canvas_frame.rowconfigure(1, weight=0)
+        canvas_frame.columnconfigure(0, weight=3)
+        canvas_frame.columnconfigure(1, weight=2)
+
+        image_frame = ttk.Frame(canvas_frame)
+        image_frame.grid(row=0, column=0, sticky="nsew")
+
+        plot_frame = ttk.Frame(canvas_frame)
+        plot_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 0))
+
+        toolbar_frame = ttk.Frame(canvas_frame)
+        toolbar_frame.grid(row=1, column=0, sticky="ew", columnspan=2)
+
+        # Figure 1: To show image
+        fig_img, ax_img = plt.subplots(constrained_layout=True, dpi=dpi)
+        ax_img.set_title(f"Axis: {0}. Index: {0}")
+        ax_img.set_xlabel("X")
+        ax_img.set_ylabel("Y")
+        ax_img.set_aspect("equal")
+
+        if np.isnan(self.current_image).any():
+            self.current_image = np.nan_to_num(self.current_image)
+        vmin_init = np.percentile(self.current_image, 0)
+        vmax_init = np.percentile(self.current_image, 100)
+
+        slice0 = ax_img.imshow(self.current_image, cmap="gray", vmin=vmin_init,
+                               vmax=vmax_init)
+
+        # Figure 2: To show intensity-plot
+        fig_plot, ax_plot = plt.subplots(constrained_layout=False, dpi=dpi)
+        ax_plot.set_title("Line Profile")
+        ax_plot.set_box_aspect(np.clip(0.95 * width / height, 0.8, 1.1))
+
+        image_frame.rowconfigure(0, weight=1)
+        image_frame.columnconfigure(0, weight=1)
+        top_window.update_idletasks()
+        canvas_img = FigureCanvasTkAgg(fig_img, master=image_frame)
+        canvas_img.draw()
+        canvas_img.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        plot_frame.rowconfigure(0, weight=1)
+        plot_frame.columnconfigure(0, weight=1)
+        canvas_plot = FigureCanvasTkAgg(fig_plot, master=plot_frame)
+        canvas_plot.draw()
+        canvas_plot.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        toolbar_frame.columnconfigure(0, weight=1)
+        toolbar = NavigationToolbar2Tk(canvas_img, toolbar_frame)
+        toolbar.update()
+        toolbar.grid(row=0, column=0, sticky="ew")
+
+        control_frame.columnconfigure(0, weight=0)
+        control_frame.columnconfigure(1, weight=1)
+        control_frame.columnconfigure(2, weight=0)
+        control_frame.columnconfigure(3, weight=0)
+        control_frame.columnconfigure(4, weight=1)
+        control_frame.columnconfigure(5, weight=0)
+        control_frame.columnconfigure(6, weight=0)
+
+        control_frame.rowconfigure(0, weight=0)
+        control_frame.rowconfigure(1, weight=0)
+
+        if data is not None:
+            axis0_radio = ttk.Radiobutton(control_frame, text="Axis 0",
+                                          variable=axis_var, value="axis 0")
+            axis0_radio.grid(row=0, column=0, sticky='w', padx=(10, 5), pady=2)
+
+            slider0 = ttk.Scale(control_frame, from_=0, to=depth - 1,
+                                orient=tk.HORIZONTAL, variable=slice0_var)
+            slider0.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
+            slice0_label = ttk.Label(control_frame,
+                                     textvariable=slice0_label_var, width=4)
+            slice0_label.grid(row=0, column=2, sticky='w', padx=(0, 10))
+        else:
+            ttk.Label(control_frame, text="Slice:").grid(row=0, column=0,
+                                                         sticky='e',
+                                                         padx=(10, 5), pady=2)
+            slider0 = ttk.Scale(control_frame, from_=0, to=depth - 1,
+                                orient=tk.HORIZONTAL, variable=slice0_var)
+            slider0.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
+
+            slice0_label = ttk.Label(control_frame,
+                                     textvariable=slice0_label_var, width=4)
+            slice0_label.grid(row=0, column=2, sticky='w', padx=(0, 10))
+
+        ttk.Label(control_frame, text="Min %:").grid(row=0, column=3,
+                                                     sticky='w', padx=(10, 5),
+                                                     pady=2)
+        min_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
+                               orient=tk.HORIZONTAL, variable=min_contrast_var)
+        min_slider.grid(row=0, column=4, sticky='ew', padx=5, pady=2)
+        min_label = ttk.Label(control_frame,
+                              textvariable=min_contrast_label_var, width=4)
+        min_label.grid(row=0, column=5, sticky='w', padx=(0, 10))
+
+        reset_button = ttk.Button(control_frame, text="Reset")
+        reset_button.grid(row=0, column=6, sticky='w', padx=(10, 10),
+                          rowspan=2, ipady=5)
+
+        if data is not None:
+            axis1_radio = ttk.Radiobutton(control_frame, text="Axis 1",
+                                          variable=axis_var, value="axis 1")
+            axis1_radio.grid(row=1, column=0, sticky='w', padx=(10, 5), pady=2)
+
+            slider1 = ttk.Scale(control_frame, from_=0, to=height - 1,
+                                orient=tk.HORIZONTAL, variable=slice1_var,
+                                state=tk.DISABLED)
+            slider1.grid(row=1, column=1, sticky='ew', padx=5, pady=2)
+            slice1_label = ttk.Label(control_frame,
+                                     textvariable=slice1_label_var, width=4)
+            slice1_label.grid(row=1, column=2, sticky='w', padx=(0, 10))
+
+        ttk.Label(control_frame, text="Max %:").grid(row=1, column=3,
+                                                     sticky='w', padx=(10, 5),
+                                                     pady=2)
+        max_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
+                               orient=tk.HORIZONTAL, variable=max_contrast_var)
+        max_slider.grid(row=1, column=4, sticky='ew', padx=5, pady=2)
+        max_label = ttk.Label(control_frame,
+                              textvariable=max_contrast_label_var, width=4)
+        max_label.grid(row=1, column=5, sticky='w', padx=(0, 10))
+
+        def clear_plot_lines(clear_all=False):
+            """Clears plot lines."""
+            nonlocal clicked_point, hline, vline
+            ax_plot.clear()
+            ax_plot.set_title("Line Profile")
+            ax_plot.set_xlabel("")
+            ax_plot.autoscale()
+            canvas_plot.draw_idle()
+            if hline:
+                hline.set_visible(False)
+                hline = None
+            if vline:
+                vline.set_visible(False)
+                vline = None
+            if clear_all:
+                clicked_point = None
+            canvas_img.draw_idle()
+
+        def update_profile_plot():
+            """
+            Updates the line profile plot based on the current clicked_point
+            and matches the zoom of the image canvas.
+            """
+            nonlocal clicked_point, hline, vline
+            if clicked_point is None or self.current_image is None:
+                ax_plot.clear()
+                ax_plot.set_title("Line Profile")
+                ax_plot.set_xlabel("")
+                ax_plot.autoscale()
+                canvas_plot.draw_idle()
+                return
+            y, x = clicked_point
+            ax_plot.clear()
+            if hline:
+                self.current_table = self.current_image[y, :]
+                ax_plot.plot(self.current_table, color="blue", linewidth=0.8)
+                ax_plot.set_title(f"Intensity at row: {y}")
+                ax_plot.set_xlabel("X")
+                x_min, x_max = ax_img.get_xlim()
+                ax_plot.set_xlim(x_min, x_max)
+            elif vline:
+                self.current_table = self.current_image[:, x]
+                ax_plot.plot(self.current_table, color="blue", linewidth=0.8)
+                ax_plot.set_title(f"Intensity at column: {x}")
+                y_min, y_max = ax_img.get_ylim()
+                ax_plot.set_xlim(y_max, y_min)
+                ax_plot.set_xlabel("Y")
+            canvas_plot.draw_idle()
+
+        def on_slice_change(value):
+            """Called when a slice slider moves. Loads new data."""
+            nonlocal img
+            active_axis = axis_var.get()
+            p_min = min_contrast_var.get() * 100.0
+            p_max = max_contrast_var.get() * 100.0
+            if active_axis == "axis 0" or data is None:
+                index = slice0_var.get()
+                slice0_label_var.set(f"{index}")
+                if file_type == "tif":
+                    img = util.load_image(list_files[index])
+                    message_text_var.set(list_files[index])
+                elif file_type == "cine":
+                    img = util.extract_frame_cine(file_path, index)
+                    message_text_var.set(file_path)
+                else:
+                    img = data[index, :, :]
+                    message_text_var.set(current_path)
+                ax_img.set_title(f"Axis: 0. Index: {index}. "
+                                 f"H x W: {height} x {width}")
+                slice0.set_extent([0, width, height, 0])
+                ax_img.set_aspect("equal")
+            else:  # axis 1 (HDF5 only)
+                index = slice1_var.get()
+                slice1_label_var.set(f"{index}")
+                img = data[:, index, :]
+                message_text_var.set(current_path)
+                ax_img.set_title(f"Axis: 1. Index: {index}. "
+                                 f"H x W: {depth} x {width}")
+                slice0.set_extent([0, width, depth, 0])
+                ax_img.set_aspect("equal")
+            self.current_image = img
+            if np.isnan(self.current_image).any():
+                self.current_image = np.nan_to_num(self.current_image)
+
+            vmin = np.percentile(self.current_image, p_min)
+            vmax = np.percentile(self.current_image, p_max)
+            if vmin == vmax:  # Handle flat data
+                vmin = vmin - 0.5
+                vmax = vmax + 0.5
+            slice0.set_data(self.current_image)
+            slice0.set_clim(vmin, vmax)
+            canvas_img.draw_idle()
+            update_profile_plot()
+
+        def on_contrast_change(value):
+            """
+            Called when contrast sliders move.
+            """
+            if self.current_image is None:
+                return
+            min_val = min_contrast_var.get()
+            max_val = max_contrast_var.get()
+            p_min = min_val * 100.0
+            p_max = max_val * 100.0
+            min_contrast_label_var.set(f"{int(p_min)}")
+            max_contrast_label_var.set(f"{int(p_max)}")
+
+            if p_min >= p_max:
+                if p_max > 0.0:
+                    p_min = p_max - 0.1
+                    min_contrast_var.set(p_min / 100.0)
+                else:
+                    p_min, p_max = 0.0, 0.1
+                    min_contrast_var.set(0.0)
+                    max_contrast_var.set(0.001)
+            vmin = np.percentile(self.current_image, p_min)
+            vmax = np.percentile(self.current_image, p_max)
+            if vmin == vmax:  # Handle flat data
+                vmin = vmin - 0.5
+                vmax = vmax + 0.5
+            slice0.set_clim(vmin, vmax)
+            canvas_img.draw_idle()
+
+        def reset_contrast(event=None):
+            """
+            Resets the contrast sliders and updates the image.
+            """
+            min_contrast_var.set(0.0)
+            max_contrast_var.set(1.0)
+            on_contrast_change(None)
+
+        def on_axis_select():
+            if slider1 is None:
+                return
+            if axis_var.get() == "axis 0":
+                slider0.config(state=tk.NORMAL)
+                slider1.config(state=tk.DISABLED)
+            else:
+                slider0.config(state=tk.DISABLED)
+                slider1.config(state=tk.NORMAL)
+            ax_img.autoscale()
+            clear_plot_lines(clear_all=True)
+            on_slice_change(None)
+            canvas_img.draw_idle()
+
+        def on_scroll(event):
+            """
+            Called on mouse scroll. Updates the slider variable and update
+            the image/label.
+            """
+            if event.inaxes != ax_img:
+                return
+            active_axis = axis_var.get()
+            scroll_step = int(np.sign(event.step))
+            if active_axis == "axis 0" or data is None:
+                current_val = slice0_var.get()
+                max_val = slider0.cget('to')
+                new_val_int = current_val + scroll_step
+                new_val_int = max(min(new_val_int, max_val), 0)
+                if new_val_int != current_val:
+                    slice0_var.set(new_val_int)
+                    on_slice_change(None)
+            else:
+                current_val = slice1_var.get()
+                max_val = slider1.cget('to')
+                new_val_int = current_val + scroll_step
+                new_val_int = max(min(new_val_int, max_val), 0)
+
+                if new_val_int != current_val:
+                    slice1_var.set(new_val_int)
+                    on_slice_change(None)
+
+        def on_zoom_pan(ax):
+            """
+            Callback for when the image axes are zoomed or panned.
+            This updates the line profile's x-limits to match.
+            """
+            if hline or vline:
+                update_profile_plot()
+
+        def plot_intensity_along_clicked_point(event):
+            nonlocal clicked_point, hline, vline
+            if event.inaxes != ax_img:
+                return
+            if event.xdata is None or event.ydata is None:
+                return
+            clicked_point = (int(event.ydata), int(event.xdata))
+            clear_plot_lines(clear_all=False)
+            if event.button == 1:
+                hline = ax_img.axhline(clicked_point[0], color="red", lw=0.6)
+            elif event.button == 3:
+                vline = ax_img.axvline(clicked_point[1], color="red", lw=0.6)
+
+            canvas_img.draw_idle()
+            update_profile_plot()
+
+        slider0.config(command=on_slice_change)
+        min_slider.config(command=on_contrast_change)
+        max_slider.config(command=on_contrast_change)
+        reset_button.config(command=reset_contrast)
+
+        if data is not None:
+            slider1.config(command=on_slice_change)
+            axis0_radio.config(command=on_axis_select)
+            axis1_radio.config(command=on_axis_select)
+
+        canvas_img.mpl_connect("scroll_event", on_scroll)
+        canvas_img.mpl_connect("button_press_event",
+                               plot_intensity_along_clicked_point)
+
+        ax_img.callbacks.connect('xlim_changed', on_zoom_pan)
+        ax_img.callbacks.connect('ylim_changed', on_zoom_pan)

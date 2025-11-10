@@ -30,13 +30,12 @@ DatView has been developed following a few key guidelines:
 With these principles in mind, DatView was built using only a few dependencies:
 -   H5py, Hdf5Plugin, Pillow, and Matplotlib.
 -   The GUI components are built with Tkinter, a built-in Python library.
-  - Matplotlib widgets are used to enhance interactivity while keeping the code minimal.
 
 For distributing the software through Pip and Conda, the software is structured based on 
 the RUI (Rendering-Utilities-Interactions) concept, which is a user-friendly 
 adaptation of the MVC design pattern.
 
-For the easiest usage, a monolithic codebase (**datview.py**, approximately 1,650 lines) 
+For the easiest usage, a monolithic codebase (**datview.py**, approximately 1,850 lines) 
 is provided, allowing users to simply copy the file and run it without needing to install 
 the software through Pip or Conda, provided that their Python environment includes H5py, Pillow, 
 and Matplotlib.
