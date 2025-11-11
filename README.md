@@ -110,3 +110,22 @@ Installing from source:
       ```commandline
       pip install .
       ```
+
+Generating the executable application
+
+- Install the required Python packages in your environment: PyInstaller, H5py,
+  Hdf5plugin, Pillow, Matplotlib
+
+- Use the **build_exe_app.py** script and run the following command:
+  ```commandline
+  python build_exe_app.py
+
+Usage
+=====
+
+- Double-click an HDF or CINE file to display its metadata.
+- Click "Interactive Viewer" to view images from a 3D dataset in an HDF file or 
+  from a folder of TIFF files.
+- Click "Save Image" to save the image you’re currently viewing in the 
+  Interactive-Viewer window of an HDF file.
+- Click "Save Table" to save a 1D or 2D array from an HDF dataset to a CSV file.

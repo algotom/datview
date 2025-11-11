@@ -332,8 +332,9 @@ def save_image(file_path, mat):
         mat = np.uint8(
             255.0 * (mat - np.min(mat)) / (np.max(mat) - np.min(mat)))
     else:
-        if mat.dtype != np.float32:
-            mat = mat.astype(np.float32)
+        data_type = str(mat.dtype)
+        if "complex" in data_type:
+            raise ValueError(f"Can't save to tiff with format: {data_type}")
     image = Image.fromarray(mat)
     try:
         image.save(file_path)
