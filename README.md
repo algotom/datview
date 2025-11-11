@@ -43,8 +43,7 @@ and Matplotlib.
 Features
 ========
 
--   Fast folder browsing and file listing. Note that the GUI appears more visually 
-    refined on Windows OS compared to the demonstration below, which was captured on Red Hat Linux.
+-   Fast folder browsing and file listing.
 
     ![Fig1](https://github.com/algotom/datview/raw/main/figs/fig1.png)
 
