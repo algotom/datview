@@ -226,8 +226,8 @@ def find_file(folder_path):
     try:
         with os.scandir(folder_path) as entries:
             for entry in entries:
-                if entry.is_file() and os.path.splitext(entry.name)[
-                    1].lower() in valid_exts:
+                if (entry.is_file() and
+                        os.path.splitext(entry.name)[1].lower() in valid_exts):
                     files.append(entry.path)
     except OSError:
         return []
@@ -736,7 +736,7 @@ class DatviewRendering(tk.Tk):
             MAIN_WIN_RATIO)
         self.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
         try:
-            icon = tk.PhotoImage(file="./datview_icon.png")
+            icon = tk.PhotoImage(file="./icon.png")
             self.iconphoto(True, icon)
         except tk.TclError:
             pass
@@ -866,11 +866,11 @@ class DatviewRendering(tk.Tk):
         """Display a graph of 1d data."""
         width, height, x_offset, y_offset = self.define_window_geometry(
             PLT_WIN_1D_RATIO)
-        window = tk.Toplevel(self)
-        window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        window.title(title)
+        window_1d = tk.Toplevel(self)
+        window_1d.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
+        window_1d.title(title)
         try:
-            dpi = window.winfo_fpixels("1i") + 20
+            dpi = window_1d.winfo_fpixels("1i") + 30
         except:
             dpi = 96
         try:
@@ -888,32 +888,33 @@ class DatviewRendering(tk.Tk):
             ax.set_title(help_text)
         plt.tight_layout()
 
-        canvas = FigureCanvasTkAgg(fig, master=window)
+        canvas = FigureCanvasTkAgg(fig, master=window_1d)
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = NavigationToolbar2Tk(canvas, window)
+        toolbar = NavigationToolbar2Tk(canvas, window_1d)
         toolbar.update()
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
         def on_close():
             plt.close(fig)
-            window.destroy()
+            window_1d.destroy()
             gc.collect()
 
-        window.protocol("WM_DELETE_WINDOW", on_close)
+        window_1d.protocol("WM_DELETE_WINDOW", on_close)
 
     def table_viewer(self, data, title="Array Table Viewer"):
         """Display 1d or 2d-data as table format"""
-        window = tk.Toplevel(self)
-        window.title(title)
+        table_window = tk.Toplevel(self)
+        table_window.title(title)
         width, height, x_offset, y_offset = self.define_window_geometry(
             TEXT_WIN_RATIO)
-        window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        text_widget = tk.Text(window, wrap="none", font=("Courier", 11))
+        table_window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
+        text_widget = tk.Text(table_window, wrap="none", font=("Courier", 11))
         text_widget.grid(row=0, column=0, sticky="nsew")
-        vsb = tk.Scrollbar(window, orient="vertical", command=text_widget.yview)
+        vsb = tk.Scrollbar(table_window, orient="vertical",
+                           command=text_widget.yview)
         vsb.grid(row=0, column=1, sticky="ns")
-        hsb = tk.Scrollbar(window, orient="horizontal",
+        hsb = tk.Scrollbar(table_window, orient="horizontal",
                            command=text_widget.xview)
         hsb.grid(row=1, column=0, sticky="ew")
         text_widget.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -965,26 +966,26 @@ class DatviewRendering(tk.Tk):
                         row_values, col_widths[:]) + "\n")
 
         display_array_as_text()
-        window.grid_rowconfigure(0, weight=1)
-        window.grid_columnconfigure(0, weight=1)
+        table_window.grid_rowconfigure(0, weight=1)
+        table_window.grid_columnconfigure(0, weight=1)
 
         def on_close():
             self.current_image = None
             self.current_table = None
-            window.destroy()
+            table_window.destroy()
             gc.collect()
 
-        window.protocol("WM_DELETE_WINDOW", on_close)
+        table_window.protocol("WM_DELETE_WINDOW", on_close)
 
     def show_histogram(self, mat, help_text="", title=""):
         """Display histogram of an image."""
         width, height, x_offset, y_offset = self.define_window_geometry(
             PLT_WIN_1D_RATIO)
-        window = tk.Toplevel(self)
-        window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        window.title(title)
+        hist_window = tk.Toplevel(self)
+        hist_window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
+        hist_window.title(title)
         try:
-            dpi = window.winfo_fpixels("1i") + 20
+            dpi = hist_window.winfo_fpixels("1i") + 30
         except:
             dpi = 96
         try:
@@ -1022,19 +1023,19 @@ class DatviewRendering(tk.Tk):
         ax.legend()
         plt.tight_layout()
 
-        canvas = FigureCanvasTkAgg(fig, master=window)
+        canvas = FigureCanvasTkAgg(fig, master=hist_window)
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = NavigationToolbar2Tk(canvas, window)
+        toolbar = NavigationToolbar2Tk(canvas, hist_window)
         toolbar.update()
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
         def on_close():
             plt.close(fig)
-            window.destroy()
+            hist_window.destroy()
             gc.collect()
 
-        window.protocol("WM_DELETE_WINDOW", on_close)
+        hist_window.protocol("WM_DELETE_WINDOW", on_close)
 
     def show_statistics_table(self, stats_dict, help_text="",
                               title="Image Statistics"):
@@ -1046,20 +1047,20 @@ class DatviewRendering(tk.Tk):
             messagebox.showwarning("No Data",
                                    "No statistics to display")
             return
-        window = tk.Toplevel(self)
-        window.title(title + " | " + help_text)
-        window.resizable(True, False)
+        stat_window = tk.Toplevel(self)
+        stat_window.title(title + " | " + help_text)
+        stat_window.resizable(True, False)
         parent_x = self.winfo_x()
         parent_y = self.winfo_y()
         parent_w = self.winfo_width()
         parent_h = self.winfo_height()
-        win_w = window.winfo_width()
-        win_h = window.winfo_height()
+        win_w = stat_window.winfo_width()
+        win_h = stat_window.winfo_height()
         x = parent_x + (parent_w - win_w) // 2
         y = parent_y + (parent_h - win_h) // 2
-        window.geometry(f"+{x}+{y}")
+        stat_window.geometry(f"+{x}+{y}")
 
-        tree = ttk.Treeview(window, columns=("Metric", "Value"),
+        tree = ttk.Treeview(stat_window, columns=("Metric", "Value"),
                             show="headings")
         tree.heading("Metric", text="Metric")
         tree.heading("Value", text="Value")
@@ -1069,7 +1070,7 @@ class DatviewRendering(tk.Tk):
         for metric, value in stats_dict.items():
             formatted_value = f"{value:.5f}"
             tree.insert("", "end", values=(metric, formatted_value))
-        window.update_idletasks()
+        stat_window.update_idletasks()
 
     def show_percentile_plot(self, percentiles, density, help_text="",
                              title=""):
@@ -1080,11 +1081,11 @@ class DatviewRendering(tk.Tk):
         """
         width, height, x_offset, y_offset = self.define_window_geometry(
             PLT_WIN_1D_RATIO)
-        window = tk.Toplevel(self)
-        window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        window.title(title)
+        perc_window = tk.Toplevel(self)
+        perc_window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
+        perc_window.title(title)
         try:
-            dpi = window.winfo_fpixels("1i") + 20
+            dpi = perc_window.winfo_fpixels("1i") + 30
         except:
             dpi = 96
         try:
@@ -1106,19 +1107,19 @@ class DatviewRendering(tk.Tk):
         ax.set_xlim(0, 100)
         plt.tight_layout()
 
-        canvas = FigureCanvasTkAgg(fig, master=window)
+        canvas = FigureCanvasTkAgg(fig, master=perc_window)
         canvas.draw()
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = NavigationToolbar2Tk(canvas, window)
+        toolbar = NavigationToolbar2Tk(canvas, perc_window)
         toolbar.update()
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
         def on_close():
             plt.close(fig)
-            window.destroy()
+            perc_window.destroy()
             gc.collect()
 
-        window.protocol("WM_DELETE_WINDOW", on_close)
+        perc_window.protocol("WM_DELETE_WINDOW", on_close)
 
     def show_2d_image(self, img, file_path=""):
         """
@@ -1139,19 +1140,19 @@ class DatviewRendering(tk.Tk):
         settings = self.define_window_geometry(PLT_WIN_2D_RATIO)
         win_width, win_height, x_offset, y_offset = settings
 
-        window = tk.Toplevel(self)
-        window.title(f"Viewing: {os.path.basename(file_path)}")
-        window.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
-        window.message_text_var = tk.StringVar(master=window, value=file_path)
+        window_2d = tk.Toplevel(self)
+        window_2d.title(f"Viewing: {os.path.basename(file_path)}")
+        window_2d.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
+        window_2d.message_text_var = tk.StringVar(master=window_2d, value=file_path)
 
-        min_contrast_var = tk.DoubleVar(master=window, value=0.0)
-        max_contrast_var = tk.DoubleVar(master=window, value=1.0)
-        min_contrast_label_var = tk.StringVar(master=window, value="0.0")
-        max_contrast_label_var = tk.StringVar(master=window, value="100.0")
+        min_contrast_var = tk.DoubleVar(master=window_2d, value=0.0)
+        max_contrast_var = tk.DoubleVar(master=window_2d, value=1.0)
+        min_contrast_label_var = tk.StringVar(master=window_2d, value="0.0")
+        max_contrast_label_var = tk.StringVar(master=window_2d, value="100.0")
 
 
         try:
-            dpi = window.winfo_fpixels("1i") + 20
+            dpi = window_2d.winfo_fpixels("1i") + 30
         except:
             dpi = 96
         try:
@@ -1167,21 +1168,21 @@ class DatviewRendering(tk.Tk):
         style.theme_use(TTK_THEME)
         style.configure("Short.TButton", padding=[5, 1, 5, 1])
 
-        window.rowconfigure(0, weight=1)
-        window.rowconfigure(1, weight=0)
-        window.rowconfigure(2, weight=0)
-        window.columnconfigure(0, weight=1)
+        window_2d.rowconfigure(0, weight=1)
+        window_2d.rowconfigure(1, weight=0)
+        window_2d.rowconfigure(2, weight=0)
+        window_2d.columnconfigure(0, weight=1)
 
-        canvas_frame = ttk.Frame(window)
+        canvas_frame = ttk.Frame(window_2d)
         canvas_frame.grid(row=0, column=0, sticky="nsew")
-        control_frame = ttk.Frame(window)
+        control_frame = ttk.Frame(window_2d)
         control_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
-        status_frame = ttk.Frame(window, relief=tk.SUNKEN, borderwidth=1)
+        status_frame = ttk.Frame(window_2d, relief=tk.SUNKEN, borderwidth=1)
         status_frame.grid(row=2, column=0, sticky="ew")
         status_frame.rowconfigure(0, weight=1)
         status_frame.columnconfigure(0, weight=1)
         message_label = ttk.Label(status_frame,
-                                  textvariable=window.message_text_var,
+                                  textvariable=window_2d.message_text_var,
                                   wraplength=win_width, anchor=tk.W)
         message_label.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
         fig_img, ax_img = plt.subplots(constrained_layout=True, dpi=dpi)
@@ -1202,7 +1203,7 @@ class DatviewRendering(tk.Tk):
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.rowconfigure(1, weight=0)
         canvas_frame.columnconfigure(0, weight=1)
-        window.update_idletasks()
+        window_2d.update_idletasks()
         canvas_img = FigureCanvasTkAgg(fig_img, master=canvas_frame)
         canvas_img.draw()
         canvas_img.get_tk_widget().grid(row=0, column=0, sticky="nsew")
@@ -1265,7 +1266,7 @@ class DatviewRendering(tk.Tk):
             percentile_button.grid(row=1, column=4, sticky='ew', padx=(0, 5),
                                    pady=(0, 5))
 
-            aspect_var = tk.StringVar(master=window, value="equal")
+            aspect_var = tk.StringVar(master=window_2d, value="equal")
             aspect_label = ttk.Label(control_frame, text="Aspect")
             aspect_combo = ttk.Combobox(control_frame, textvariable=aspect_var,
                                         values=["equal", "auto"], width=5)
@@ -1371,10 +1372,10 @@ class DatviewRendering(tk.Tk):
             self.current_image = None
             self.current_table = None
             plt.close(fig_img)
-            window.destroy()
+            window_2d.destroy()
             gc.collect()
 
-        window.protocol("WM_DELETE_WINDOW", on_close)
+        window_2d.protocol("WM_DELETE_WINDOW", on_close)
 
     def interactive_viewer(self, file_path, file_type):
         """
@@ -1448,25 +1449,25 @@ class DatviewRendering(tk.Tk):
         settings = self.define_window_geometry(PLT_WIN_3D_RATIO)
         win_width, win_height, x_offset, y_offset = settings
 
-        window = tk.Toplevel(self)
-        window.update_job = None
-        window.title(f"Viewing: {os.path.basename(current_path)}")
-        window.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
+        inter_window = tk.Toplevel(self)
+        inter_window.update_job = None
+        inter_window.title(f"Viewing: {os.path.basename(current_path)}")
+        inter_window.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
 
-        message_text_var = tk.StringVar(master=window, value=current_path)
-        axis_var = tk.StringVar(master=window, value="axis 0")
-        slice0_var = tk.IntVar(master=window, value=0)
-        slice1_var = tk.IntVar(master=window, value=0)
-        min_contrast_var = tk.DoubleVar(master=window, value=0.0)
-        max_contrast_var = tk.DoubleVar(master=window, value=1.0)
+        message_text_var = tk.StringVar(master=inter_window, value=current_path)
+        axis_var = tk.StringVar(master=inter_window, value="axis 0")
+        slice0_var = tk.IntVar(master=inter_window, value=0)
+        slice1_var = tk.IntVar(master=inter_window, value=0)
+        min_contrast_var = tk.DoubleVar(master=inter_window, value=0.0)
+        max_contrast_var = tk.DoubleVar(master=inter_window, value=1.0)
 
-        slice0_label_var = tk.StringVar(master=window, value="0")
-        slice1_label_var = tk.StringVar(master=window, value="0")
-        min_contrast_label_var = tk.StringVar(master=window, value="0.0")
-        max_contrast_label_var = tk.StringVar(master=window, value="100.0")
+        slice0_label_var = tk.StringVar(master=inter_window, value="0")
+        slice1_label_var = tk.StringVar(master=inter_window, value="0")
+        min_contrast_label_var = tk.StringVar(master=inter_window, value="0.0")
+        max_contrast_label_var = tk.StringVar(master=inter_window, value="100.0")
 
         try:
-            dpi = window.winfo_fpixels("1i") + 20
+            dpi = inter_window.winfo_fpixels("1i") + 30
         except:
             dpi = 96
         try:
@@ -1478,16 +1479,16 @@ class DatviewRendering(tk.Tk):
             pass
 
         # --- Configure window's grid ---
-        window.rowconfigure(0, weight=1)
-        window.rowconfigure(1, weight=0)
-        window.rowconfigure(2, weight=0)
-        window.columnconfigure(0, weight=1)
+        inter_window.rowconfigure(0, weight=1)
+        inter_window.rowconfigure(1, weight=0)
+        inter_window.rowconfigure(2, weight=0)
+        inter_window.columnconfigure(0, weight=1)
         # --- Create and grid the frames ---
-        canvas_frame = ttk.Frame(window)
+        canvas_frame = ttk.Frame(inter_window)
         canvas_frame.grid(row=0, column=0, sticky="nsew")
-        control_frame = ttk.Frame(window)
+        control_frame = ttk.Frame(inter_window)
         control_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
-        status_frame = ttk.Frame(window, relief=tk.SUNKEN, borderwidth=1)
+        status_frame = ttk.Frame(inter_window, relief=tk.SUNKEN, borderwidth=1)
         status_frame.grid(row=2, column=0, sticky="ew")
         status_frame.rowconfigure(0, weight=1)
         status_frame.columnconfigure(0, weight=1)
@@ -1524,11 +1525,11 @@ class DatviewRendering(tk.Tk):
         # Figure 2: To show intensity-plot
         fig_plot, ax_plot = plt.subplots(constrained_layout=False, dpi=dpi)
         ax_plot.set_title("Line Profile")
-        ax_plot.set_box_aspect(np.clip(0.95 * width / height, 0.8, 1.1))
+        ax_plot.set_box_aspect(np.clip(0.95 * width / height, 0.8, 1.0))
 
         image_frame.rowconfigure(0, weight=1)
         image_frame.columnconfigure(0, weight=1)
-        window.update_idletasks()
+        inter_window.update_idletasks()
         canvas_img = FigureCanvasTkAgg(fig_img, master=image_frame)
         canvas_img.draw()
         canvas_img.get_tk_widget().grid(row=0, column=0, sticky="nsew")
@@ -1668,7 +1669,7 @@ class DatviewRendering(tk.Tk):
         ttk.Label(control_frame, text="Aspect").grid(row=0, column=8,
                                                      sticky='w', padx=(0, 5),
                                                      pady=5)
-        aspect_var = tk.StringVar(master=window, value="equal")
+        aspect_var = tk.StringVar(master=inter_window, value="equal")
         aspect_combo = ttk.Combobox(control_frame, textvariable=aspect_var,
                                     values=["equal", "auto"], width=5)
         aspect_combo.grid(row=1, column=8, sticky='ewns', padx=(0, 5), pady=5)
@@ -1753,7 +1754,7 @@ class DatviewRendering(tk.Tk):
             Only runs when the user stops dragging the slider.
             """
             nonlocal img, height, width
-            window.update_job = None
+            inter_window.update_job = None
             active_axis = axis_var.get()
             p_min = min_contrast_var.get() * 100.0
             p_max = max_contrast_var.get() * 100.0
@@ -1828,12 +1829,14 @@ class DatviewRendering(tk.Tk):
                 slice0_label_var.set(f"{val_int}")
             else:
                 slice1_label_var.set(f"{val_int}")
-            if window.update_job:
+            if inter_window.update_job:
                 try:
-                    window.after_cancel(window.update_job)
+                    inter_window.after_cancel(inter_window.update_job)
                 except ValueError:
                     pass
-            window.update_job = window.after(10, lambda: perform_update(value))
+            inter_window.update_job = inter_window.after(10,
+                                                         lambda: perform_update(
+                                                             value))
 
         def on_contrast_change(value):
             """
@@ -1982,10 +1985,10 @@ class DatviewRendering(tk.Tk):
                 pass
             plt.close(fig_img)
             plt.close(fig_plot)
-            window.destroy()
+            inter_window.destroy()
             gc.collect()
 
-        window.protocol("WM_DELETE_WINDOW", on_close)
+        inter_window.protocol("WM_DELETE_WINDOW", on_close)
 
     def export_tif_window(self, file_path, file_type):
         """

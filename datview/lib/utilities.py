@@ -185,8 +185,8 @@ def find_file(folder_path):
     try:
         with os.scandir(folder_path) as entries:
             for entry in entries:
-                if entry.is_file() and os.path.splitext(entry.name)[
-                    1].lower() in valid_exts:
+                if (entry.is_file() and
+                        os.path.splitext(entry.name)[1].lower() in valid_exts):
                     files.append(entry.path)
     except OSError:
         return []
