@@ -20,10 +20,12 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=display_msg,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--version", action="version",
+    parser.add_argument("-v", "--version", action="version",
                         version=f"Datview {__version__}")
-    parser.add_argument("--base", type=str, default=None,
+    parser.add_argument("-b", "--base", type=str, default=None,
                         help="Specify the base folder")
+    parser.add_argument("path", type=str, nargs='?', default=None,
+                        help="Specify the base folder (positional alternative)")
     return parser.parse_args()
 
 
@@ -41,10 +43,12 @@ def get_base_folder():
 
 def main():
     args = parse_args()
-    if args.base is None:
-        base_folder = get_base_folder()
-    else:
+    if args.base is not None:
         base_folder = os.path.abspath(args.base)
+    elif args.path is not None:
+        base_folder = os.path.abspath(args.path)
+    else:
+        base_folder = get_base_folder()
     app = DatviewInteraction(base_folder)
     app.mainloop()
 

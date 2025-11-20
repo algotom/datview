@@ -1,7 +1,7 @@
 import os
 import gc
-import threading
 import signal
+import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -45,10 +45,11 @@ class DatviewInteraction(ren.DatviewRendering):
         self.file_list_view.bind("<Down>", self.on_arrow_key_click)
         self.save_image_button.bind("<Button-1>", self.save_to_image)
         self.save_table_button.bind("<Button-1>", self.save_to_table)
+        self.export_tif_button.bind("<Button-1>", self.launch_export_tif_window)
 
         # Initialize parameters
         self.populate_tree_view()
-        self.stop_listing = False
+        self.listing_counter = 0
         self._after_id = None
         self.selected_folder_path = None
         self.current_table = None
@@ -100,12 +101,6 @@ class DatviewInteraction(ren.DatviewRendering):
                                                  values=[self.base_folder])
         self.folder_tree_view.insert(root_node, "end", text="dummy")
 
-    def populate_tree_async(self, parent_node, folder_path):
-        """Use a thread to populate the tree asynchronously."""
-        thread = threading.Thread(target=self.populate_tree,
-                                  args=(parent_node, folder_path), daemon=True)
-        thread.start()
-
     def populate_tree(self, parent_node, folder_path):
         """Populate the tree view with folders (not files) recursively."""
         existing_children = self.folder_tree_view.get_children(parent_node)
@@ -119,37 +114,44 @@ class DatviewInteraction(ren.DatviewRendering):
                 folder_node = self.folder_tree_view.insert(parent_node, "end",
                                                            text=folder_name,
                                                            values=[full_path])
-                # Insert a dummy node for potential expansion
                 self.folder_tree_view.insert(folder_node, "end", text="dummy")
         except PermissionError as e:
             print(f"Permission error accessing folder: {folder_path} - {e}")
 
+    def populate_tree_async(self, parent_node, folder_path):
+        """Use a thread to populate the tree asynchronously."""
+        thread = threading.Thread(target=self.populate_tree,
+                                  args=(parent_node, folder_path), daemon=True)
+        thread.start()
+
     def on_tree_expand(self, event):
-        """Handle tree expansion asynchronously to avoid GUI freezing."""
+        """Handle tree expansion synchronously."""
         selected_item = self.folder_tree_view.selection()[0]
         folder_path = self.folder_tree_view.item(selected_item, "values")[0]
         self.populate_tree_async(selected_item, folder_path)
 
-    def file_generator(self, folder_path):
-        """Generator to yield file names incrementally in sorted order
-        and stop if needed.
+    def file_generator(self, folder_path, request_id):
+        """
+        Generator to yield file names incrementally.
+        Checks if the current request_id is still valid.
         """
         try:
             with os.scandir(folder_path) as entries:
                 files = sorted(
                     entry.name for entry in entries if entry.is_file())
                 for file_name in files:
-                    if self.stop_listing:
+                    if self.listing_counter != request_id:
                         return
                     yield file_name
         except PermissionError as e:
             self.update_listbox(f"Permission error: {e}")
 
-    def process_file_listing(self, folder_path):
+    def process_file_listing(self, folder_path, request_id):
         """Process the file listing using a generator to handle large
         directories incrementally."""
-        for i, file_name in enumerate(self.file_generator(folder_path)):
-            if self.stop_listing:
+        for i, file_name in enumerate(
+                self.file_generator(folder_path, request_id)):
+            if self.listing_counter != request_id:
                 return
             self.update_listbox(file_name)
         gc.collect()
@@ -158,21 +160,23 @@ class DatviewInteraction(ren.DatviewRendering):
         self.after(0, lambda: self.file_list_view.insert(tk.END, message))
 
     def on_folder_select(self, event):
-        """Handle folder selection from Treeview and stop listing from the
-        previous folder."""
+        """Handle folder selection from Treeview."""
         selected_items = self.folder_tree_view.selection()
         if not selected_items:
             return
-        self.stop_listing = True
+        self.listing_counter += 1
+        current_request_id = self.listing_counter
+
         self.file_list_view.delete(0, tk.END)
         self.disable_hdf_key_entry()
         selected_item = selected_items[0]
         folder_path = self.folder_tree_view.item(selected_item, "values")[0]
         self.selected_folder_path = folder_path
-        self.stop_listing = False
         self.update_status_bar(folder_path)
+        gc.collect()
         thread = threading.Thread(target=self.process_file_listing,
-                                  args=(folder_path,))
+                                  args=(folder_path, current_request_id),
+                                  daemon=True)
         thread.start()
 
     def restore_focus_to_listbox(self, current_selection):
@@ -354,6 +358,7 @@ class DatviewInteraction(ren.DatviewRendering):
                     self.file_list_view.selection_set(current_selected_file)
                     self.file_list_view.activate(current_selected_file)
                 hdf_window.destroy()
+                gc.collect()
 
             # Bind selection event to show group or dataset info
             tree_view.bind("<<TreeviewSelect>>", on_tree_select)
@@ -433,6 +438,7 @@ class DatviewInteraction(ren.DatviewRendering):
         return None
 
     def launch_table_viewer(self, event):
+        win_title = "Array Table Viewer"
         selected_index = self.file_list_view.curselection()
         if len(selected_index) == 0:
             messagebox.showinfo("Input needed", "Please select a file")
@@ -443,6 +449,7 @@ class DatviewInteraction(ren.DatviewRendering):
             hdf_key_path = self.hdf_key_list.get().strip()
             try:
                 data = util.load_hdf(full_path, hdf_key_path)
+                win_title = full_path + " | HDF-key: " + hdf_key_path
             except Exception as e:
                 messagebox.showerror("Can't read file",
                                      f"File: {selected_file}\nError: {e}")
@@ -456,6 +463,7 @@ class DatviewInteraction(ren.DatviewRendering):
                 return
         elif selected_file.lower().endswith(ren.CINE_EXT):
             data = util.get_time_stamps_cine(full_path)
+            win_title = full_path + " | Time stamps"
         else:
             return
         if 1 in data.shape:
@@ -470,7 +478,7 @@ class DatviewInteraction(ren.DatviewRendering):
                    "Please use image viewer for large arrays.")
             messagebox.showinfo("Array Too Large", msg)
             return
-        self.table_viewer(data)
+        self.table_viewer(data, win_title)
         self.current_table = data
 
     def save_to_image(self, event):
@@ -511,6 +519,25 @@ class DatviewInteraction(ren.DatviewRendering):
             msg = ("No selected data (1d or 2d-array from a file). "
                    "Use viewers to choose one!")
             messagebox.showinfo("Input needed", msg)
+
+    def launch_export_tif_window(self, event):
+        """Launch the interactive viewer for the selected folder/file."""
+        check = self.check_file_type_in_listbox()
+        if check is None or check == "tif":
+            msg = "Please select a HDF file or a CINE file"
+            messagebox.showinfo("Input needed", msg)
+            return
+        if check == "cine":
+            selected_index = self.file_list_view.curselection()
+            selected_file = self.file_list_view.get(selected_index)
+            file_path = os.path.join(self.selected_folder_path, selected_file)
+            self.export_tif_window(file_path, file_type="cine")
+        else:
+            selected_index = self.file_list_view.curselection()
+            if len(selected_index) == 0:
+                messagebox.showinfo("Input needed", "Please select a hdf file")
+                return
+            self.export_tif_window(self.selected_folder_path, file_type="hdf")
 
     def on_exit(self):
         if not self.shutdown_flag:

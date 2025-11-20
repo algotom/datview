@@ -175,14 +175,22 @@ def get_hdf_data(file_path, dataset_path):
             return str(error), None
 
 
-def find_file(path):
-    """Find files matching a given pattern"""
-    file_path = glob.glob(path)
-    if len(file_path) == 0:
-        raise ValueError("!!! No files found in: {}".format(path))
-    for i in range(len(file_path)):
-        file_path[i] = os.path.normpath(file_path[i])
-    return sorted(file_path)
+def find_file(folder_path):
+    """
+    Fast directory scanning using os.scandir.
+    Returns sorted full paths of image files.
+    """
+    valid_exts = {".tif", ".tiff", ".jpg", ".jpeg", ".png"}
+    files = []
+    try:
+        with os.scandir(folder_path) as entries:
+            for entry in entries:
+                if entry.is_file() and os.path.splitext(entry.name)[
+                    1].lower() in valid_exts:
+                    files.append(entry.path)
+    except OSError:
+        return []
+    return sorted(files)
 
 
 def is_text_file(file_path, num_bytes=1024):
@@ -269,7 +277,7 @@ def extract_frame_cine(cine_path, frame_index):
     """
     metadata = get_metadata_cine(cine_path)
     with open(cine_path, "rb") as cinefile:
-        width, height = metadata["biWidth"], metadata["biHeight"]
+        # width, height = metadata["biWidth"], metadata["biHeight"]
         total_frames = metadata["TotalImageCount"]
         if frame_index < 0 or frame_index >= total_frames:
             raise ValueError(f"Frame index {frame_index} is out of "
@@ -361,6 +369,223 @@ def save_table(file_path, data):
                 return "Data must be a 1D or 2D array"
     except Exception as error:
         return str(error)
+
+
+def get_image_statistics(mat):
+    """Calculates a standard set of statistics for a given image"""
+    if mat is None or mat.size == 0:
+        return None
+    flat_data = mat.ravel()
+    stats_data = {
+        "Minimum": np.min(flat_data),
+        "Maximum": np.max(flat_data),
+        "Mean": np.mean(flat_data),
+        "Median": np.median(flat_data),
+        "Std. Deviation": np.std(flat_data),
+    }
+    percentiles = [1, 5, 95, 99]
+    percentile_values = np.percentile(flat_data, percentiles)
+    stats_data["1st Percentile"] = percentile_values[0]
+    stats_data["5th Percentile"] = percentile_values[1]
+    stats_data["95th Percentile"] = percentile_values[2]
+    stats_data["99th Percentile"] = percentile_values[3]
+    return stats_data
+
+
+def get_percentile_density(mat):
+    """
+    Compute a percentile-based histogram normalized by bin width.
+    Bin widths are calculated using the percentile.
+
+    Returns
+    -------
+    percentiles : array-like
+        Percentile values for the valid bins (after dropping zero-width bins).
+    density : array-like
+        Normalized density (sum = 1).
+    """
+    mat = np.asarray(mat).ravel()
+    npoint = mat.size
+    if npoint == 0:
+        raise ValueError("Input data is empty.")
+    # Compute percentile-based bin edges
+    num_bin = 101
+    percentiles = np.linspace(0, 100, num_bin)
+    bin_edges = np.percentile(mat, percentiles)
+    # Compute histogram counts
+    counts, _ = np.histogram(mat, bins=bin_edges)
+    bin_widths = np.diff(bin_edges)
+    valid = bin_widths > 0
+    counts = counts[valid]
+    bin_widths = bin_widths[valid]
+    percentiles = percentiles[0:num_bin - 1] + 0.5
+    percentiles = percentiles[valid]
+    density = counts / (npoint * bin_widths)
+    # Normalize by sum(density)
+    if np.any(density > 0):
+        density = density / np.sum(density)
+    return percentiles, density
+
+
+def apply_rescaling(mat, nbit=16, minmax=None):
+    """
+    Rescale a 32-bit array to 16-bit/8-bit data.
+    """
+    if nbit != 8 and nbit != 16:
+        raise ValueError("Only two options for nbit: 8 or 16 !!!")
+    if minmax is None:
+        gmin, gmax = np.min(mat), np.max(mat)
+    else:
+        (gmin, gmax) = minmax
+    if gmax > gmin:
+        mat = np.clip(mat, gmin, gmax)
+        mat = (mat - gmin) / (gmax - gmin)
+    if nbit == 8:
+        mat = np.uint8(np.clip(mat * 255, 0, 255))
+    else:
+        mat = np.uint16(np.clip(mat * 65535, 0, 65535))
+    return mat
+
+
+def _get_cropped_slice(file_type, data_obj, index, axis, crop_rect):
+    """
+    Internal helper to extract a single, cropped 2D slice.
+    data_obj is either a CINE file path or an open HDF5 dataset.
+    crop_rect is (y_start, y_stop, x_start, x_stop)
+    """
+    y_start, y_stop, x_start, x_stop = crop_rect
+    try:
+        if file_type == "cine":
+            mat = extract_frame_cine(data_obj, index)
+            mat_cropped = mat[y_start:y_stop, x_start:x_stop]
+        else:
+            if axis == 0:
+                mat_cropped = data_obj[0][index, y_start:y_stop, x_start:x_stop]
+            else:
+                mat_cropped = data_obj[0][y_start:y_stop, index, x_start:x_stop]
+        if mat_cropped.size == 0:
+            raise ValueError("Crop parameters result in an empty image.")
+        return mat_cropped
+    except (IndexError, TypeError, ValueError) as e:
+        raise ValueError(f"Failed to crop slice at index {index}. "
+                         f"Check crop parameters. Error: {e}")
+    except Exception as e:
+        raise IOError(f"Failed to read data for slice {index}. Error: {e}")
+
+
+def export_hdf_cine_to_tif(parameters_dict, status_callback=None):
+    """
+    Export to tif from hdf/cine file given a parameters dictionary.
+    Includes an optional status_callback function to report progress.
+    """
+
+    def _report_status(message):
+        if status_callback:
+            status_callback(message)
+
+    try:
+        output_path = parameters_dict["output_path"]
+        input_path = parameters_dict["input_path"]
+        prefix = parameters_dict["prefix"]
+        axis = parameters_dict["axis"]
+        slice_start = parameters_dict["slice_start"]
+        slice_stop = parameters_dict["slice_stop"]
+        slice_step = parameters_dict["slice_step"]
+        y_start = parameters_dict["y_start"]
+        y_stop = parameters_dict["y_stop"]
+        x_start = parameters_dict["x_start"]
+        x_stop = parameters_dict["x_stop"]
+        rescale = parameters_dict["rescale"]
+        min_percent = parameters_dict["min_percent"]
+        max_percent = parameters_dict["max_percent"]
+        slice_skip = parameters_dict["slice_skip"]
+        hdf_key = parameters_dict.get("hdf_key")
+    except KeyError as e:
+        raise ValueError(f"Missing required parameter: {e}")
+    _report_status("Parameters validated...")
+    hdf_ext = (".nxs", "nx", ".h5", ".hdf", ".hdf5")
+    file_name = os.path.basename(input_path)
+    if file_name.lower().endswith(hdf_ext):
+        file_type = "hdf"
+        if hdf_key is None:
+            raise ValueError("HDF file selected, but no HDF key was provided.")
+    elif file_name.lower().endswith("cine"):
+        file_type = "cine"
+    else:
+        raise ValueError(f"Invalid file type: {file_name}")
+    crop_rect = (y_start, y_stop, x_start, x_stop)
+    slice_indices = range(slice_start, slice_stop, slice_step)
+    if len(slice_indices) == 0:
+        raise ValueError(
+            "Slice Start, Stop, and Step result in 0 images to export.")
+    total_images = len(slice_indices)
+    gmin, gmax = None, None
+    if rescale in ("8-bit", "16-bit"):
+        _report_status("Starting sampling pass...")
+        gmin_list = []
+        gmax_list = []
+        sample_step = max(slice_skip, slice_step)
+        sample_indices = range(slice_start, slice_stop, sample_step)
+
+        if len(sample_indices) == 0:
+            raise ValueError("Sampling step or slice step is too large, "
+                             "resulting in 0 samples.")
+        data_obj = None
+        try:
+            if file_type == "hdf":
+                data_obj = load_hdf(input_path, hdf_key, return_file_obj=True)
+                if data_obj is None:
+                    raise ValueError(f"Could not load HDF dataset: {hdf_key}")
+            else:
+                data_obj = input_path
+            for i_sample, i in enumerate(sample_indices):
+                if i_sample % 10 == 0:
+                    _report_status(f"Sampling slice "
+                                   f"{i_sample + 1}/{len(sample_indices)}...")
+                mat_sample = _get_cropped_slice(file_type, data_obj, i, axis,
+                                                crop_rect)
+                if mat_sample is not None:
+                    gmin_list.append(np.percentile(mat_sample, min_percent))
+                    gmax_list.append(np.percentile(mat_sample, max_percent))
+        finally:
+            if file_type == "hdf" and data_obj is not None:
+                data_obj[-1].close()
+        if not gmin_list or not gmax_list:
+            raise ValueError("Failed to gather samples. "
+                             "Check slice/crop parameters.")
+        gmax = np.max(np.asarray(gmax_list))
+        gmin = np.min(np.asarray(gmin_list))
+        _report_status(f"Sampling complete. Global min={gmin}, max={gmax}")
+    _report_status(f"Starting export for {total_images} images...")
+    data_obj = None
+    try:
+        if file_type == "hdf":
+            data_obj = load_hdf(input_path, hdf_key, return_file_obj=True)
+            if data_obj is None:
+                raise ValueError(f"Could not load HDF dataset: {hdf_key}")
+        else:
+            data_obj = input_path
+        for i_export, i in enumerate(slice_indices):
+            mat_out = _get_cropped_slice(file_type, data_obj, i, axis,
+                                         crop_rect)
+            if gmin is not None and gmax is not None:
+                if rescale == "8-bit":
+                    mat_out = apply_rescaling(mat_out, nbit=8,
+                                              minmax=(gmin, gmax))
+                elif rescale == "16-bit":
+                    mat_out = apply_rescaling(mat_out, nbit=16,
+                                              minmax=(gmin, gmax))
+            file_name = f"{prefix}_{i:05}.tif"
+            save_path = os.path.join(output_path, file_name)
+            save_image(save_path, mat_out)
+            if (i_export + 1) % 10 == 0 or (i_export + 1) == total_images:
+                _report_status(
+                    f"Exported image {i_export + 1}/{total_images}...")
+    finally:
+        if file_type == "hdf" and data_obj is not None:
+            data_obj[-1].close()
+    _report_status("Export complete.")
+    return "Success"
 
 
 def save_config(data):
