@@ -44,24 +44,24 @@ Features
 ========
 -   Fast folder browsing and file listing.
 
-    ![Fig1](figs/fig1.png)
+    ![Fig1](https://github.com/algotom/datview/raw/main/figs/fig1.png)
   
 -   Interactive viewing 1D, 2D, or 3D datasets in an HDF file. Supports ROI zooming, 
     horizontal/vertical line-profile selection, contrast adjustment, and slicing along axis 0 and 1. 
 
-    ![Fig2](figs/fig2.png)
+    ![Fig2](https://github.com/algotom/datview/raw/main/figs/fig2.png)
 
 -   Options to display histogram, percentile density, image statistics.
 
-    ![Fig3](figs/fig3.png)
+    ![Fig3](https://github.com/algotom/datview/raw/main/figs/fig3.png)
 
 -   View metadata in HDF or CINE files, and display text-file contents.
 
-    ![Fig4](figs/fig4.png)
+    ![Fig4](https://github.com/algotom/datview/raw/main/figs/fig4.png)
 
 -   Export to TIF files from HDF or CINE files.
 
-    ![Fig5](figs/fig5.png)
+    ![Fig5](https://github.com/algotom/datview/raw/main/figs/fig5.png)
 
 -   Interactive viewing of TIF files in a folder or frames of a CINE file.
 
@@ -70,8 +70,6 @@ Features
 -   Opening multiple interactive viewers simultaneously.
 -   Saving a 2D array in a 3D dataset (HDF or CINE) as an image.
 -   Saving a 1D or 2D dataset of an HDF file or the current line profile as a CSV file.
-
-    ![Fig6](figs/fig6.png)
 
 Installation
 ============

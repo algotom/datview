@@ -6,6 +6,7 @@ Users can copy this file and run it as:
     python datview.py
 
 Dependencies: h5py, Pillow, matplotlib. Optional: hdf5plugin
+Current version: 1.3.0
 """
 import os
 import csv
