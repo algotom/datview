@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument("-b", "--base", type=str, default=None,
                         help="Specify the base folder")
     parser.add_argument("path", type=str, nargs='?', default=None,
-                        help="Specify the base folder (positional alternative)")
+                        help="Specify the base folder")
     return parser.parse_args()
 
 

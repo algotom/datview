@@ -23,14 +23,12 @@ class DatviewInteraction(ren.DatviewRendering):
     """
     def __init__(self, folder="."):
         super().__init__()
-
         self.base_folder = Path(folder).expanduser()
         if not self.base_folder.exists():
             msg = f"No folder: {self.base_folder}\nReset to: {Path.home()}"
             messagebox.showwarning("Folder does not exit", msg)
             self.base_folder = Path.home()
         self.base_folder_label.config(text=self.base_folder)
-
         # Link actions to GUI components
         self.interactive_viewer_button.bind("<Button-1>",
                                             self.launch_interactive_viewer)
@@ -45,28 +43,42 @@ class DatviewInteraction(ren.DatviewRendering):
         self.file_list_view.bind("<Down>", self.on_arrow_key_click)
         self.save_image_button.bind("<Button-1>", self.save_to_image)
         self.save_table_button.bind("<Button-1>", self.save_to_table)
-        self.export_tif_button.bind("<Button-1>", self.launch_export_tif_window)
-
+        self.export_tif_button.bind("<Button-1>",
+                                    self.launch_export_tif_window)
         # Initialize parameters
         self.populate_tree_view()
         self.listing_counter = 0
         self._after_id = None
         self.selected_folder_path = None
+        # Variables
+        self.active_viewer_instance = None
         self.current_table = None
         self.current_image = None
-
+        # Re-apply global Matplotlib font settings
         rc("font", size=ren.PLT_MAIN_FONTSIZE)
         rc("axes", titlesize=ren.PLT_MAIN_FONTSIZE)
         rc("axes", labelsize=ren.PLT_MAIN_FONTSIZE)
         rc("xtick", labelsize=ren.PLT_MAIN_FONTSIZE)
         rc("ytick", labelsize=ren.PLT_MAIN_FONTSIZE)
-
         # Handle exit event
         self.protocol("WM_DELETE_WINDOW", self.on_exit)
         # Handle Ctrl+C
         signal.signal(signal.SIGINT, self.on_exit_signal)
         self.shutdown_flag = False
         self.check_for_exit_signal()
+
+    def set_active_viewer_instance(self, viewer):
+        """Called by InteractiveViewer when it gains focus."""
+        self.active_viewer_instance = viewer
+        self.update_status_bar(f"Active viewer: {viewer.file_path}")
+
+    def notify_viewer_closed(self, viewer):
+        """Called by InteractiveViewer when it closes."""
+        if self.active_viewer_instance == viewer:
+            self.active_viewer_instance = None
+            self.current_image = None
+            self.current_table = None
+            self.update_status_bar(self.selected_folder_path or "")
 
     def select_base_folder(self, event):
         """Open file dialog to select a new base folder."""
@@ -166,7 +178,6 @@ class DatviewInteraction(ren.DatviewRendering):
             return
         self.listing_counter += 1
         current_request_id = self.listing_counter
-
         self.file_list_view.delete(0, tk.END)
         self.disable_hdf_key_entry()
         selected_item = selected_items[0]
@@ -192,11 +203,11 @@ class DatviewInteraction(ren.DatviewRendering):
         def find_array_datasets(hdf_obj, base_path=""):
             """Search for datasets in hdf file that are 1D, 2D, or 3D arrays.
             """
-            hdf_datasets = []
+            hdf_datasets_t = []
             for key, item in hdf_obj.items():
                 current_path = f"{base_path}/{key}".strip("/")
                 if isinstance(item, h5py.Group):
-                    hdf_datasets.extend(
+                    hdf_datasets_t.extend(
                         find_array_datasets(item, current_path))
                 elif isinstance(item, h5py.Dataset):
                     data_type, value = util.get_hdf_data(file_path,
@@ -205,8 +216,8 @@ class DatviewInteraction(ren.DatviewRendering):
                     if (data_type == "array"
                             and isinstance(value, tuple)
                             and 0 < len(value) < 4):
-                        hdf_datasets.append((current_path, value))
-            return hdf_datasets
+                        hdf_datasets_t.append((current_path, value))
+            return hdf_datasets_t
 
         current_selection = self.file_list_view.curselection()
         self.hdf_key_list.set("")
@@ -243,7 +254,7 @@ class DatviewInteraction(ren.DatviewRendering):
         selected_index = self.file_list_view.curselection()
         if not selected_index:
             self.disable_hdf_key_entry()
-            self.update_status_bar("")
+            self.update_status_bar(self.selected_folder_path or "")
             return
         file_index = selected_index[0]
         selected_file = self.file_list_view.get(file_index)
@@ -358,7 +369,6 @@ class DatviewInteraction(ren.DatviewRendering):
                     self.file_list_view.selection_set(current_selected_file)
                     self.file_list_view.activate(current_selected_file)
                 hdf_window.destroy()
-                gc.collect()
 
             # Bind selection event to show group or dataset info
             tree_view.bind("<<TreeviewSelect>>", on_tree_select)
@@ -406,30 +416,88 @@ class DatviewInteraction(ren.DatviewRendering):
                    "the folder")
             messagebox.showinfo("Input needed", msg)
             return
+        file_path = None
+        list_files = None
+        hdf_key_path = None
+        selected_index = self.file_list_view.curselection()
+        if not selected_index:
+            messagebox.showinfo("Input needed", "Please select a file")
+            return
+        selected_file = self.file_list_view.get(selected_index[0])
         if check == "tif":
-            self.interactive_viewer(self.selected_folder_path, file_type="tif")
-        elif check == "cine":
-            selected_index = self.file_list_view.curselection()
-            selected_file = self.file_list_view.get(selected_index)
-            file_path = os.path.join(self.selected_folder_path, selected_file)
-            self.interactive_viewer(file_path, file_type="cine")
-        else:
-            selected_index = self.file_list_view.curselection()
-            if len(selected_index) == 0:
-                messagebox.showinfo("Input needed", "Please select a hdf file")
+            file_path = self.selected_folder_path
+            list_files = util.find_file(file_path)
+            if not list_files:
+                messagebox.showerror("No Files",
+                                     f"No image files found in: {file_path}")
                 return
-            self.interactive_viewer(self.selected_folder_path, file_type="hdf")
+        elif check == "cine":
+            file_path = os.path.join(self.selected_folder_path, selected_file)
+        elif check == "hdf":
+            file_path = os.path.join(self.selected_folder_path, selected_file)
+            hdf_key_path = self.hdf_key_list.get().strip()
+            if not hdf_key_path or hdf_key_path == "No valid arrays found":
+                messagebox.showinfo("Input needed",
+                                    "Please select an HDF array key.")
+                return
+            try:
+                data_obj, file_obj = util.load_hdf(file_path, hdf_key_path,
+                                                   return_file_obj=True)
+                data_shape = data_obj.shape
+                data_ndim = len(data_shape)
+                if data_ndim == 1:
+                    data = data_obj[:]
+                    self.current_table = data
+                    self.show_1d_data(data,
+                                      help_text="HDF-key: " + hdf_key_path,
+                                      title=file_path)
+                    file_obj.close()
+                    return
+                elif data_ndim == 2:
+                    data = data_obj[:]
+                    self.current_image = data
+                    self.show_2d_image(data, file_path)
+                    file_obj.close()
+                    return
+                elif data_ndim != 3:
+                    messagebox.showerror("Can't show data",
+                                         f"Only can show 1d, 2d, or 3d data. "
+                                         f"Not {data_ndim}d")
+                    return
+            except Exception as e:
+                messagebox.showerror("Can't read file",
+                                     f"File: {selected_file}\nError: {e}")
+                return
+
+        inter_window = tk.Toplevel(self)
+        inter_window.title(f"Viewing: {os.path.basename(file_path)}")
+        try:
+            ren.InteractiveViewer(main_window=inter_window, main_app=self,
+                                  file_path=file_path, file_type=check,
+                                  hdf_key=hdf_key_path,
+                                  list_files=list_files)
+        except Exception as e:
+            messagebox.showerror("Viewer Error",
+                                 f"Failed to initialize viewer: {e}")
+            inter_window.destroy()
 
     def check_file_type_in_listbox(self):
-        """Check if the listbox contains tif files or a hdf, cine file and
-        return the file type."""
+        """Check if the listbox contains tif files or a hdf, cine file."""
         if self.file_list_view.size() == 0:
             return None
         selected_index = self.file_list_view.curselection()
         if len(selected_index) == 0:
-            return
-        file_name = self.file_list_view.get(selected_index)
-        if file_name.lower().endswith((".tif", ".tiff")):
+            try:
+                if self.selected_folder_path:
+                    for entry in os.scandir(self.selected_folder_path):
+                        if entry.name.lower().endswith(ren.IMAGE_EXT):
+                            return "tif"
+            except:
+                pass
+            return None
+
+        file_name = self.file_list_view.get(selected_index[0])
+        if file_name.lower().endswith(ren.IMAGE_EXT):
             return "tif"
         elif file_name.lower().endswith(ren.HDF_EXT):
             return "hdf"
@@ -438,17 +506,22 @@ class DatviewInteraction(ren.DatviewRendering):
         return None
 
     def launch_table_viewer(self, event):
-        win_title = "Array Table Viewer"
         selected_index = self.file_list_view.curselection()
         if len(selected_index) == 0:
+            if self.active_viewer_instance:
+                self.save_to_table(event)
+                return
             messagebox.showinfo("Input needed", "Please select a file")
             return
         selected_file = self.file_list_view.get(selected_index[0])
         full_path = os.path.join(self.selected_folder_path, selected_file)
+        self.current_table = None
+        file_obj = None
         if selected_file.lower().endswith(ren.HDF_EXT):
             hdf_key_path = self.hdf_key_list.get().strip()
             try:
-                data = util.load_hdf(full_path, hdf_key_path)
+                data, file_obj = util.load_hdf(full_path, hdf_key_path,
+                                               return_file_obj=True)
                 win_title = full_path + " | HDF-key: " + hdf_key_path
             except Exception as e:
                 messagebox.showerror("Can't read file",
@@ -457,6 +530,7 @@ class DatviewInteraction(ren.DatviewRendering):
         elif selected_file.lower().endswith(ren.IMAGE_EXT):
             try:
                 data = util.load_image(full_path, average=True)
+                win_title = full_path + " | Averaged Channel"
             except Exception as e:
                 messagebox.showerror("Can't read file",
                                      f"File: {selected_file}\nError: {e}")
@@ -479,46 +553,448 @@ class DatviewInteraction(ren.DatviewRendering):
             messagebox.showinfo("Array Too Large", msg)
             return
         self.table_viewer(data, win_title)
+        if file_obj is not None:
+            file_obj.close()
         self.current_table = data
 
     def save_to_image(self, event):
-        if self.current_image is not None:
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".tif",
-                filetypes=[("TIFF files", "*.tif"), ("PNG files", "*.png"),
-                           ("JPEG files", "*.jpg")],
-                title="Save Image As")
-            if not file_path:
+        """Saves the current image slice from the ACTIVE viewer."""
+        viewer = self.active_viewer_instance
+        if viewer is None or not hasattr(viewer, 'viewer_state'):
+            if self.current_image is None:
+                msg = "No active image. Use Interactive-Viewer!"
+                messagebox.showinfo("Input needed", msg)
                 return
-
-            util.save_image(file_path, self.current_image)
-            self.update_status_bar(f"Image saved to: {file_path}")
-            self.current_image = None
+            img_to_save = self.current_image
         else:
-            msg = "No selected image. Use Interactive-Viewer to choose one!"
-            messagebox.showinfo("Input needed", msg)
+            img_to_save = viewer.viewer_state.get("image")
+            if img_to_save is None:
+                messagebox.showinfo("Input needed",
+                                    "Active viewer has no current "
+                                    "image slice.")
+                return
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".tif",
+            filetypes=[("TIFF files", "*.tif"), ("PNG files", "*.png"),
+                       ("JPEG files", "*.jpg")],
+            title="Save Image As")
+        if not file_path:
+            return
+        util.save_image(file_path, img_to_save)
+        self.update_status_bar(f"Image saved to: {file_path}")
 
     def save_to_table(self, event):
-        if self.current_table is not None:
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv")],
-                title="Save Data As")
-            if not file_path:
-                return
-            total_elements = self.current_table.size
-            if total_elements > 2000 * 2000:
-                msg = ("Array is too large to be saved to csv format.\n"
-                       "Please use Save-image for large arrays.")
-                messagebox.showinfo("Array Too Large", msg)
-                return
-            util.save_table(file_path, self.current_table)
-            self.update_status_bar(f"Data saved to: {file_path}")
-            self.current_table = None
+        """Saves 1D line profile from ACTIVE viewer OR last loaded array."""
+        viewer = self.active_viewer_instance
+        if viewer is not None and hasattr(viewer, 'viewer_state'):
+            data_to_save = viewer.viewer_state.get("table")
+            if data_to_save is None:
+                data_to_save = self.current_table
         else:
-            msg = ("No selected data (1d or 2d-array from a file). "
-                   "Use viewers to choose one!")
+            data_to_save = self.current_table
+
+        if data_to_save is None:
+            msg = "No selected data. Use viewers or click image for profile!"
             messagebox.showinfo("Input needed", msg)
+            return
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Save Data As")
+        if not file_path:
+            return
+        data_to_save = np.asarray(data_to_save)
+        total_elements = data_to_save.size
+        if total_elements > 2000 * 2000:
+            msg = "Array too large. Operation aborted."
+            messagebox.showinfo("Array Too Large", msg)
+            return
+        util.save_table(file_path, data_to_save)
+        self.update_status_bar(f"Data saved to: {file_path}")
+
+    def export_tif_window(self, file_path, file_type):
+        """
+        Creates the window for exporting HDF/CINE data to TIF files.
+        """
+        input_path = None
+        hdf_key_path = None
+        hdf_object = None
+        if file_type == "cine":
+            cine_metadata = util.get_metadata_cine(file_path)
+            width = cine_metadata["biWidth"]
+            height = cine_metadata["biHeight"]
+            depth = cine_metadata["TotalImageCount"]
+            input_path = file_path
+        elif file_type == "hdf":
+            selected_index = self.file_list_view.curselection()
+            selected_file = self.file_list_view.get(selected_index[0])
+            full_path = os.path.join(self.selected_folder_path, selected_file)
+            hdf_key_path = self.hdf_key_list.get().strip()
+            try:
+                data, hdf_object = util.load_hdf(full_path, hdf_key_path,
+                                                 return_file_obj=True)
+            except Exception as e:
+                messagebox.showerror("Can't read file",
+                                     f"File: {selected_file}\nError: {e}")
+                return
+            if len(data.shape) == 2:
+                data = np.expand_dims(data, 0)
+            if len(data.shape) != 3:
+                messagebox.showerror("Only for 3d data",
+                                     f"File: {selected_file}\nOnly export "
+                                     f"2d/3d data. Not {len(data.shape)}d")
+                return
+            (depth, height, width) = data.shape
+            input_path = full_path
+        else:
+            messagebox.showinfo("File type", "Please select a HDF/CINE file")
+            return
+
+        file_name = os.path.basename(input_path)
+        export_window = tk.Toplevel(self)
+        export_window.title(f"Export TIF of file: {file_name}")
+        export_window.transient(self)
+        export_window.resizable(True, False)
+        export_window.vars = {
+            "path": tk.StringVar(master=export_window,
+                                 value="No folder selected..."),
+            "new_folder": tk.StringVar(master=export_window, value="tifs"),
+            "axis": tk.StringVar(master=export_window, value="Axis 0"),
+            "start": tk.StringVar(master=export_window, value="0"),
+            "stop": tk.StringVar(master=export_window, value="-1"),
+            "step": tk.StringVar(master=export_window, value="1"),
+            "y_start": tk.StringVar(master=export_window, value="0"),
+            "y_stop": tk.StringVar(master=export_window, value="-1"),
+            "x_start": tk.StringVar(master=export_window, value="0"),
+            "x_stop": tk.StringVar(master=export_window, value="-1"),
+            "rescale": tk.StringVar(master=export_window, value="None"),
+            "min_p": tk.StringVar(master=export_window, value="0"),
+            "max_p": tk.StringVar(master=export_window, value="100"),
+            "skip": tk.StringVar(master=export_window, value="10"),
+            "prefix": tk.StringVar(master=export_window, value="img"),
+            "status": tk.StringVar(master=export_window,
+                                   value=f"Data shape (depth, height, width): "
+                                         f"{depth, height, width}")}
+
+        def on_close_window():
+            """
+            Cleanup variables explicitly to satisfy the Garbage Collector
+            before destroying the Tcl widget.
+            """
+            for v in export_window.vars.values():
+                try:
+                    v.set("")
+                except tk.TclError:
+                    pass
+            export_window.vars.clear()
+            export_window.destroy()
+            if hdf_object is not None:
+                hdf_object.close()
+
+        export_window.protocol("WM_DELETE_WINDOW", on_close_window)
+
+        def browse_destination():
+            folder_selected = filedialog.askdirectory(parent=export_window)
+            if folder_selected:
+                folder_selected = os.path.normpath(folder_selected)
+                export_window.vars["path"].set(folder_selected)
+
+        def create_subfolder():
+            output_path_val = export_window.vars["path"].get()
+            new_folder_name = export_window.vars["new_folder"].get().strip()
+            if output_path_val == "No folder selected..." or not os.path.isdir(
+                    output_path_val):
+                messagebox.showerror("Error",
+                                     "Please select a base folder first.",
+                                     parent=export_window)
+                return
+            if not new_folder_name:
+                messagebox.showwarning("Warning",
+                                       "Please give name for the new folder.",
+                                       parent=export_window)
+                return
+            final_output_path = os.path.join(output_path_val, new_folder_name)
+            try:
+                os.makedirs(final_output_path, exist_ok=True)
+                export_window.vars["path"].set(final_output_path)
+                export_window.vars["new_folder"].set("")
+                messagebox.showinfo("Success",
+                                    f"Folder created:\n{final_output_path}",
+                                    parent=export_window)
+            except OSError as e:
+                messagebox.showerror("Error",
+                                     f"Failed to create folder.\nError: {e}")
+        # Build Layout
+        export_window.grid_columnconfigure(0, weight=1)
+        # Destination
+        dest_frame = ttk.LabelFrame(export_window, text="Destination")
+        dest_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        dest_frame.grid_columnconfigure(0, weight=1)
+
+        ttk.Entry(dest_frame, textvariable=export_window.vars["path"],
+                  state="readonly").grid(row=0, column=0, sticky="ew", padx=5,
+                                         pady=5)
+        ttk.Button(dest_frame, text="Browse base folder",
+                   command=browse_destination).grid(row=0, column=1,
+                                                    sticky="ew", padx=5,
+                                                    pady=5)
+        ttk.Entry(dest_frame,
+                  textvariable=export_window.vars["new_folder"]).grid(
+            row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
+        ttk.Button(dest_frame, text="Make subfolder",
+                   command=create_subfolder).grid(row=1, column=1, sticky="ew",
+                                                  padx=5, pady=(0, 5))
+        # Slicing
+        slice_frame = ttk.LabelFrame(export_window, text="Slicing Parameters")
+        slice_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+
+        radio_frame = ttk.Frame(slice_frame)
+        radio_frame.grid(row=0, column=0, columnspan=6, sticky="w", padx=5,
+                         pady=(5, 0))
+        ttk.Label(radio_frame, text="Export along:").pack(side=tk.LEFT)
+        axis0_radio = ttk.Radiobutton(radio_frame, text="Axis 0",
+                                      variable=export_window.vars["axis"],
+                                      value="Axis 0")
+        axis0_radio.pack(side=tk.LEFT, padx=5)
+        axis1_radio = ttk.Radiobutton(radio_frame, text="Axis 1",
+                                      variable=export_window.vars["axis"],
+                                      value="Axis 1")
+        axis1_radio.pack(side=tk.LEFT, padx=5)
+        if file_type == "cine":
+            axis1_radio.config(state=tk.DISABLED)
+        ttk.Label(slice_frame, text="Start Index:").grid(row=1, column=0,
+                                                         sticky="w", padx=5,
+                                                         pady=5)
+        ttk.Entry(slice_frame, textvariable=export_window.vars["start"],
+                  width=8).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(slice_frame, text="Stop Index:").grid(row=1, column=2,
+                                                        sticky="w",
+                                                        padx=(15, 5), pady=5)
+        ttk.Entry(slice_frame, textvariable=export_window.vars["stop"],
+                  width=8).grid(row=1, column=3, sticky="w", padx=5, pady=5)
+        ttk.Label(slice_frame, text="Step Index:").grid(row=1, column=4,
+                                                        sticky="w",
+                                                        padx=(15, 5), pady=5)
+        ttk.Entry(slice_frame, textvariable=export_window.vars["step"],
+                  width=8).grid(row=1, column=5, sticky="w", padx=5, pady=5)
+        # Cropping
+        crop_frame = ttk.LabelFrame(export_window, text="Cropping Parameters")
+        crop_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        ttk.Label(crop_frame, text="Height | Y-start:").grid(row=0, column=0,
+                                                             sticky="w",
+                                                             padx=5, pady=5)
+        ttk.Entry(crop_frame, textvariable=export_window.vars["y_start"],
+                  width=8).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(crop_frame, text="Y-stop:").grid(row=0, column=2, sticky="w",
+                                                   padx=(15, 5), pady=5)
+        ttk.Entry(crop_frame, textvariable=export_window.vars["y_stop"],
+                  width=8).grid(row=0, column=3, sticky="w", padx=5, pady=5)
+        ttk.Label(crop_frame, text="Width  | X-start:").grid(row=1, column=0,
+                                                             sticky="w",
+                                                             padx=5, pady=5)
+        ttk.Entry(crop_frame, textvariable=export_window.vars["x_start"],
+                  width=8).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(crop_frame, text="X-stop:").grid(row=1, column=2, sticky="w",
+                                                   padx=(15, 5), pady=5)
+        ttk.Entry(crop_frame, textvariable=export_window.vars["x_stop"],
+                  width=8).grid(row=1, column=3, sticky="w", padx=5, pady=5)
+        # Rescaling
+        rescale_frame = ttk.LabelFrame(export_window,
+                                       text="Rescaling Parameters")
+        rescale_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=5)
+        bit_radio_frame = ttk.Frame(rescale_frame)
+        bit_radio_frame.grid(row=0, column=0, columnspan=6, sticky="w", padx=5,
+                             pady=(5, 0))
+        ttk.Label(bit_radio_frame, text="Rescale to:").pack(side=tk.LEFT)
+        ttk.Radiobutton(bit_radio_frame, text="None",
+                        variable=export_window.vars["rescale"],
+                        value="None").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(bit_radio_frame, text="8-bit",
+                        variable=export_window.vars["rescale"],
+                        value="8-bit").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(bit_radio_frame, text="16-bit",
+                        variable=export_window.vars["rescale"],
+                        value="16-bit").pack(side=tk.LEFT, padx=5)
+        ttk.Label(rescale_frame, text="Min Percentile:").grid(row=1, column=0,
+                                                              sticky="w",
+                                                              padx=5, pady=5)
+        ttk.Entry(rescale_frame, textvariable=export_window.vars["min_p"],
+                  width=8).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(rescale_frame, text="Max Percentile:").grid(row=1, column=2,
+                                                              sticky="w",
+                                                              padx=(10, 5),
+                                                              pady=5)
+        ttk.Entry(rescale_frame, textvariable=export_window.vars["max_p"],
+                  width=8).grid(row=1, column=3, sticky="w", padx=5, pady=5)
+        ttk.Label(rescale_frame, text="Slice sampling step:").grid(row=2,
+                                                                   column=0,
+                                                                   sticky="w",
+                                                                   padx=5,
+                                                                   pady=(0, 5))
+        ttk.Entry(rescale_frame, textvariable=export_window.vars["skip"],
+                  width=8).grid(row=2, column=1, sticky="w", padx=5,
+                                pady=(0, 5))
+        # Naming
+        naming_frame = ttk.LabelFrame(export_window,
+                                      text="File Naming & Export")
+        naming_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
+        naming_frame.grid_columnconfigure(1, weight=1)
+        ttk.Label(naming_frame, text="File Prefix:").grid(row=0, column=0,
+                                                          sticky="w", padx=5,
+                                                          pady=5)
+        ttk.Entry(naming_frame,
+                  textvariable=export_window.vars["prefix"]).grid(row=0,
+                                                                  column=1,
+                                                                  sticky="ew",
+                                                                  padx=5,
+                                                                  pady=5)
+
+        def parse_int(value, default=0, allow_negative=False):
+            try:
+                val = int(value)
+                if not allow_negative and val < 0 and val != -1:
+                    return default
+                return val
+            except ValueError:
+                return default
+
+        def validate_export_parameters():
+            params = {}
+            out_path = export_window.vars["path"].get()
+            if not os.path.isdir(out_path):
+                messagebox.showerror("Invalid Input",
+                                     "Please select a valid folder.",
+                                     parent=export_window)
+                return
+            params['output_path'] = out_path
+            params['input_path'] = input_path
+            params['hdf_key'] = hdf_key_path
+            prefix = export_window.vars["prefix"].get().strip()
+            if not prefix:
+                messagebox.showerror("Invalid Input",
+                                     "Please enter a file prefix.",
+                                     parent=export_window)
+                return
+            params['prefix'] = prefix
+            params['source_shape'] = (depth, height, width)
+            params['axis'] = 0 if export_window.vars[
+                                      "axis"].get() == "Axis 0" else 1
+
+            slice_dim = depth if params['axis'] == 0 else height
+            params['slice_start'] = parse_int(
+                export_window.vars["start"].get(), 0)
+            params['slice_stop'] = parse_int(export_window.vars["stop"].get(),
+                                             slice_dim, allow_negative=True)
+            params['slice_step'] = parse_int(export_window.vars["step"].get(),
+                                             1)
+            if params['slice_step'] == 0:
+                params['slice_step'] = 1
+            if params['slice_stop'] == -1 or params['slice_stop'] > slice_dim:
+                params['slice_stop'] = slice_dim
+            if params['slice_start'] >= params['slice_stop']:
+                messagebox.showerror("Invalid Input",
+                                     "Start index must be < Stop index.",
+                                     parent=export_window)
+                return
+
+            y_dim = height if params['axis'] == 0 else depth
+            x_dim = width
+            params['y_start'] = parse_int(export_window.vars["y_start"].get(),
+                                          0)
+            params['y_stop'] = parse_int(export_window.vars["y_stop"].get(),
+                                         y_dim, allow_negative=True)
+            params['x_start'] = parse_int(export_window.vars["x_start"].get(),
+                                          0)
+            params['x_stop'] = parse_int(export_window.vars["x_stop"].get(),
+                                         x_dim, allow_negative=True)
+            if params['y_stop'] == -1:
+                params['y_stop'] = y_dim
+            if params['x_stop'] == -1:
+                params['x_stop'] = x_dim
+            if (params['y_start'] >= params['y_stop'] or params['x_start'] >=
+                    params['x_stop']):
+                messagebox.showerror("Invalid Input",
+                                     "Invalid crop dimensions.",
+                                     parent=export_window)
+                return
+            params['rescale'] = export_window.vars["rescale"].get()
+            try:
+                params['min_percent'] = float(
+                    export_window.vars["min_p"].get())
+                params['max_percent'] = float(
+                    export_window.vars["max_p"].get())
+            except:
+                messagebox.showerror("Invalid Input",
+                                     "Percentiles must be numbers.",
+                                     parent=export_window)
+                return
+            if params['min_percent'] >= params['max_percent']:
+                messagebox.showerror("Invalid Input",
+                                     "Min Percentile must be < Max.",
+                                     parent=export_window)
+                return
+            params['slice_skip'] = parse_int(export_window.vars["skip"].get(),
+                                             1)
+            if params['slice_skip'] <= 0:
+                params['slice_skip'] = 1
+            return params
+
+        def start_export():
+            """ Synchronous export on main thread. """
+            params = validate_export_parameters()
+            if params is None:
+                return
+            run_export_button.config(state=tk.DISABLED)
+            export_window.vars["status"].set("Preparing export...")
+            export_window.update()
+
+            def _gui_status_callback(message):
+                try:
+                    export_window.vars["status"].set(message)
+                    export_window.update()
+                except tk.TclError:
+                    pass
+
+            try:
+                result = util.export_hdf_cine_to_tif(params,
+                                                     _gui_status_callback)
+                if result == "Success":
+                    messagebox.showinfo("Export Complete",
+                                        f"Saved to:\n{params['output_path']}",
+                                        parent=export_window)
+            except Exception as e:
+                messagebox.showerror("Export Error",
+                                     f"An error occurred:\n{e}",
+                                     parent=export_window)
+            finally:
+                try:
+                    if export_window.winfo_exists():
+                        run_export_button.config(state=tk.NORMAL)
+                        export_window.vars["status"].set(
+                            f"Data shape: {depth, height, width}")
+                except tk.TclError:
+                    pass
+
+        run_export_button = ttk.Button(naming_frame, text="Export",
+                                       command=start_export)
+        run_export_button.grid(row=0, column=2, sticky="e", padx=(5, 10),
+                               pady=5)
+        status_bar = ttk.Label(export_window,
+                               textvariable=export_window.vars["status"],
+                               relief=tk.SUNKEN, anchor="w", padding=(1, 1))
+        status_bar.grid(row=5, column=0, sticky="ew", padx=10, pady=(5, 10))
+
+        export_window.update_idletasks()
+        export_window.grab_set()
+        parent_x = self.winfo_x()
+        parent_y = self.winfo_y()
+        parent_w = self.winfo_width()
+        parent_h = self.winfo_height()
+        win_w = export_window.winfo_width()
+        win_h = export_window.winfo_height()
+        x = parent_x + (parent_w - win_w) // 2
+        y = parent_y + (parent_h - win_h) // 2
+        export_window.geometry(f"+{x}+{y}")
 
     def launch_export_tif_window(self, event):
         """Launch the interactive viewer for the selected folder/file."""
@@ -527,17 +1003,24 @@ class DatviewInteraction(ren.DatviewRendering):
             msg = "Please select a HDF file or a CINE file"
             messagebox.showinfo("Input needed", msg)
             return
+
+        selected_index = self.file_list_view.curselection()
+        if len(selected_index) == 0:
+            messagebox.showinfo("Input needed", "Please select a file")
+            return
+
+        selected_file = self.file_list_view.get(selected_index[0])
+        file_path = os.path.join(self.selected_folder_path, selected_file)
+
         if check == "cine":
-            selected_index = self.file_list_view.curselection()
-            selected_file = self.file_list_view.get(selected_index)
-            file_path = os.path.join(self.selected_folder_path, selected_file)
             self.export_tif_window(file_path, file_type="cine")
-        else:
-            selected_index = self.file_list_view.curselection()
-            if len(selected_index) == 0:
-                messagebox.showinfo("Input needed", "Please select a hdf file")
+        else:  # hdf
+            hdf_key_path = self.hdf_key_list.get().strip()
+            if not hdf_key_path or hdf_key_path == "No valid arrays found":
+                messagebox.showinfo("Input needed",
+                                    "Please select an HDF array key.")
                 return
-            self.export_tif_window(self.selected_folder_path, file_type="hdf")
+            self.export_tif_window(file_path, file_type="hdf")
 
     def on_exit(self):
         if not self.shutdown_flag:
@@ -554,6 +1037,11 @@ class DatviewInteraction(ren.DatviewRendering):
                 print("\n************")
                 print("Exit the app")
                 print("************\n")
+
+                if self.active_viewer_instance and hasattr(
+                        self.active_viewer_instance, 'on_close'):
+                    self.active_viewer_instance.on_close()
+
                 plt.close("all")
                 self.destroy()
             except Exception as e:
