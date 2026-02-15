@@ -6,7 +6,7 @@ Users can copy this file and run it as:
     python datview.py
 
 Dependencies: h5py, Pillow, matplotlib. Optional: hdf5plugin
-Current version: 1.4.0
+Current version: 1.4.1
 """
 import os
 import csv
@@ -1423,7 +1423,7 @@ class InteractiveViewer:
             if self.depth == 0:
                 raise ValueError("No TIF files found.")
             initial_image = load_image(list_files[0], average=True)
-            self.height, self.width = initial_image.shape
+            self.height, self.width = initial_image.shape[:2]
         elif file_type == "cine":
             metadata = get_metadata_cine(file_path)
             self.width = metadata["biWidth"]
@@ -1534,8 +1534,9 @@ class InteractiveViewer:
         toolbar_frame = ttk.Frame(canvas_frame)
         toolbar_frame.grid(row=1, column=0, sticky="ew", columnspan=2)
         # Figure 1: Image
-        self.fig_img, self.ax_img = plt.subplots(constrained_layout=True,
-                                                 dpi=dpi)
+        self.fig_img = matplotlib.figure.Figure(constrained_layout=True,
+                                                dpi=dpi)
+        self.ax_img = self.fig_img.add_subplot(111)
         self.ax_img.set_title(f"Axis: 0. Index: 0. H x W: "
                               f"{self.height} x {self.width}")
         self.ax_img.set_xlabel("X")
@@ -1548,9 +1549,9 @@ class InteractiveViewer:
                                          vmax=vmax_init)
         self.slice0.set_extent([0, self.width, self.height, 0])
         # Figure 2: Intensity-plot
-        self.fig_plot, self.ax_plot = plt.subplots(
-            constrained_layout=False,
-            dpi=dpi)
+        self.fig_plot = matplotlib.figure.Figure(constrained_layout=False,
+                                                 dpi=dpi)
+        self.ax_plot = self.fig_plot.add_subplot(111)
         self.ax_plot.set_title("Line Profile")
         self.ax_plot.set_box_aspect(
             np.clip(0.95 * self.width / self.height, 0.8, 1.0))
@@ -1693,8 +1694,8 @@ class InteractiveViewer:
 
         self.id_scroll = self.canvas_img.mpl_connect("scroll_event",
                                                      self.on_scroll)
-        self.id_press = self.canvas_img.mpl_connect("button_press_event",
-                                                    self.plot_intensity_along_clicked_point)
+        self.id_press = self.canvas_img.mpl_connect(
+            "button_press_event", self.plot_intensity_along_clicked_point)
         # Connect to Matplotlib's built-in axis change callback
         self.id_xlim = self.ax_img.callbacks.connect('xlim_changed',
                                                      self.on_zoom_pan)
@@ -2147,11 +2148,6 @@ class InteractiveViewer:
                 pass
             self.hdf_file_obj = None
         self.main_app.notify_viewer_closed(self)
-        try:
-            plt.close(self.fig_img)
-            plt.close(self.fig_plot)
-        except Exception:
-            pass
         self.viewer_state.clear()
         try:
             self.main_win.destroy()
@@ -2199,6 +2195,7 @@ class DatviewInteraction(DatviewRendering):
         self.selected_folder_path = None
         # Variables
         self.active_viewer_instance = None
+        self.viewers = []
         self.current_table = None
         self.current_image = None
         # Re-apply global Matplotlib font settings
@@ -2221,6 +2218,8 @@ class DatviewInteraction(DatviewRendering):
 
     def notify_viewer_closed(self, viewer):
         """Called by InteractiveViewer when it closes."""
+        if viewer in self.viewers:
+            self.viewers.remove(viewer)
         if self.active_viewer_instance == viewer:
             self.active_viewer_instance = None
             self.current_image = None
@@ -2262,20 +2261,33 @@ class DatviewInteraction(DatviewRendering):
 
     def populate_tree(self, parent_node, folder_path):
         """Populate the tree view with folders (not files) recursively."""
-        existing_children = self.folder_tree_view.get_children(parent_node)
-        for child in existing_children:
-            self.folder_tree_view.delete(child)
         try:
             subfolders = [f for f in os.listdir(folder_path) if
                           os.path.isdir(os.path.join(folder_path, f))]
-            for folder_name in sorted(subfolders):
-                full_path = os.path.join(folder_path, folder_name)
-                folder_node = self.folder_tree_view.insert(parent_node, "end",
-                                                           text=folder_name,
-                                                           values=[full_path])
-                self.folder_tree_view.insert(folder_node, "end", text="dummy")
+            subfolders.sort()
         except PermissionError as e:
             print(f"Permission error accessing folder: {folder_path} - {e}")
+            return
+
+        def update_ui():
+            try:
+                existing_children = self.folder_tree_view.get_children(
+                    parent_node)
+                for child in existing_children:
+                    self.folder_tree_view.delete(child)
+                for folder_name in subfolders:
+                    full_path = os.path.join(folder_path, folder_name)
+                    folder_node = self.folder_tree_view.insert(parent_node,
+                                                               "end",
+                                                               text=folder_name,
+                                                               values=[
+                                                                   full_path])
+                    self.folder_tree_view.insert(folder_node, "end",
+                                                 text="dummy")
+            except tk.TclError:
+                pass
+
+        self.after(0, update_ui)
 
     def populate_tree_async(self, parent_node, folder_path):
         """Use a thread to populate the tree asynchronously."""
@@ -2285,7 +2297,9 @@ class DatviewInteraction(DatviewRendering):
 
     def on_tree_expand(self, event):
         """Handle tree expansion synchronously."""
-        selected_item = self.folder_tree_view.selection()[0]
+        selected_item = self.folder_tree_view.focus()
+        if not selected_item:
+            return
         folder_path = self.folder_tree_view.item(selected_item, "values")[0]
         self.populate_tree_async(selected_item, folder_path)
 
@@ -2303,7 +2317,7 @@ class DatviewInteraction(DatviewRendering):
                         return
                     yield file_name
         except PermissionError as e:
-            self.update_listbox(f"Permission error: {e}")
+            self.update_listbox(f"Permission error: {e}", request_id)
 
     def process_file_listing(self, folder_path, request_id):
         """Process the file listing using a generator to handle large
@@ -2312,11 +2326,15 @@ class DatviewInteraction(DatviewRendering):
                 self.file_generator(folder_path, request_id)):
             if self.listing_counter != request_id:
                 return
-            self.update_listbox(file_name)
+            self.update_listbox(file_name, request_id)
         gc.collect()
 
-    def update_listbox(self, message):
-        self.after(0, lambda: self.file_list_view.insert(tk.END, message))
+    def update_listbox(self, message, request_id=None):
+        def _update():
+            if request_id is not None and self.listing_counter != request_id:
+                return
+            self.file_list_view.insert(tk.END, message)
+        self.after(0, _update)
 
     def on_folder_select(self, event):
         """Handle folder selection from Treeview."""
@@ -2328,7 +2346,10 @@ class DatviewInteraction(DatviewRendering):
         self.file_list_view.delete(0, tk.END)
         self.disable_hdf_key_entry()
         selected_item = selected_items[0]
-        folder_path = self.folder_tree_view.item(selected_item, "values")[0]
+        item_values = self.folder_tree_view.item(selected_item, "values")
+        if not item_values:
+            return
+        folder_path = item_values[0]
         self.selected_folder_path = folder_path
         self.update_status_bar(folder_path)
         gc.collect()
@@ -2619,9 +2640,11 @@ class DatviewInteraction(DatviewRendering):
         inter_window = tk.Toplevel(self)
         inter_window.title(f"Viewing: {os.path.basename(file_path)}")
         try:
-            InteractiveViewer(main_window=inter_window, main_app=self,
-                              file_path=file_path, file_type=check,
-                              hdf_key=hdf_key_path, list_files=list_files)
+            viewer = InteractiveViewer(main_window=inter_window, main_app=self,
+                                       file_path=file_path, file_type=check,
+                                       hdf_key=hdf_key_path,
+                                       list_files=list_files)
+            self.viewers.append(viewer)
         except Exception as e:
             messagebox.showerror("Viewer Error",
                                  f"Failed to initialize viewer: {e}")

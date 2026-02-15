@@ -898,8 +898,9 @@ class InteractiveViewer:
         toolbar_frame = ttk.Frame(canvas_frame)
         toolbar_frame.grid(row=1, column=0, sticky="ew", columnspan=2)
         # Figure 1: Image
-        self.fig_img, self.ax_img = plt.subplots(constrained_layout=True,
-                                                 dpi=dpi)
+        self.fig_img = matplotlib.figure.Figure(constrained_layout=True,
+                                                dpi=dpi)
+        self.ax_img = self.fig_img.add_subplot(111)
         self.ax_img.set_title(f"Axis: 0. Index: 0. H x W: "
                               f"{self.height} x {self.width}")
         self.ax_img.set_xlabel("X")
@@ -912,9 +913,9 @@ class InteractiveViewer:
                                          vmax=vmax_init)
         self.slice0.set_extent([0, self.width, self.height, 0])
         # Figure 2: Intensity-plot
-        self.fig_plot, self.ax_plot = plt.subplots(
-            constrained_layout=False,
-            dpi=dpi)
+        self.fig_plot = matplotlib.figure.Figure(constrained_layout=False,
+                                                 dpi=dpi)
+        self.ax_plot = self.fig_plot.add_subplot(111)
         self.ax_plot.set_title("Line Profile")
         self.ax_plot.set_box_aspect(
             np.clip(0.95 * self.width / self.height, 0.8, 1.0))
@@ -1057,8 +1058,8 @@ class InteractiveViewer:
 
         self.id_scroll = self.canvas_img.mpl_connect("scroll_event",
                                                      self.on_scroll)
-        self.id_press = self.canvas_img.mpl_connect("button_press_event",
-                                                    self.plot_intensity_along_clicked_point)
+        self.id_press = self.canvas_img.mpl_connect(
+            "button_press_event", self.plot_intensity_along_clicked_point)
         # Connect to Matplotlib's built-in axis change callback
         self.id_xlim = self.ax_img.callbacks.connect('xlim_changed',
                                                      self.on_zoom_pan)
@@ -1511,11 +1512,6 @@ class InteractiveViewer:
                 pass
             self.hdf_file_obj = None
         self.main_app.notify_viewer_closed(self)
-        try:
-            plt.close(self.fig_img)
-            plt.close(self.fig_plot)
-        except Exception:
-            pass
         self.viewer_state.clear()
         try:
             self.main_win.destroy()
