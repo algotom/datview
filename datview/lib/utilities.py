@@ -2,16 +2,66 @@ import os
 import csv
 import json
 import platform
-import glob
 import struct
-import h5py
-import hdf5plugin
+import logging
+import datetime
 import numpy as np
 from PIL import Image
 
-# ==============================================================================
-#                          Utility methods
-# ==============================================================================
+try:
+    import h5py
+except ImportError:
+    h5py = None
+
+try:
+    import hdf5plugin  # For viewing compressed HDF files
+except ImportError:
+    pass
+
+APP_NAME = "DatView"
+FONT_SIZE = 13
+FONT_WEIGHT = "normal"
+MAIN_WIN_RATIO = 0.8
+TEXT_WIN_RATIO = 0.7
+PLT_WIN_3D_RATIO = 0.85
+PLT_WIN_2D_RATIO = 0.85
+PLT_WIN_1D_RATIO = 0.6
+PLT_1D_RATIO = 0.8
+HIST_WIN_RATIO = 0.9
+PLT_MAIN_FONTSIZE = 9
+PLT_TEXT_FONTSIZE = 8
+SCROLL_SENSITIVITY = 1
+
+UI_MARGIN_XS = 2
+UI_MARGIN_S = 4
+UI_MARGIN_M = 8
+UI_MARGIN_L = 10
+UI_SPACING_S = 2
+UI_SPACING_M = 4
+UI_SPACING_L = 8
+
+BTN_H = 35
+HIST_MIN_W = 130
+HIST_MAX_W = 200
+TREE_MIN_W = 280
+TABLE_ROW_H = 25
+
+# Data display logic constants
+HIST_NUM_BINS = 256
+HIST_P_MIN = 0.5
+HIST_P_MAX = 99.5
+TEXT_LOAD_WHOLE_MAX_BYTES = 5 * 1024 * 1024
+TEXT_STREAM_CHUNK = 64 * 1024
+TABLE_SIZE_CUTOFF = 200 * 200
+MAX_TABLE_SAVE = 2000 * 2000
+CSV_MAX_ELEMENTS = 4_000_000
+DEBOUNCE_TIMER_MS = 10
+FILE_SELECT_DEBOUNCE_MS = 200
+
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
+HDF_EXT = (".nxs", ".nx", ".h5", ".hdf", ".hdf5")
+TEXT_EXT = (".json", ".out", ".err", ".txt", ".yaml")
+CINE_EXT = ".cine"
 
 CINE_LOOKUP_TABLE = np.array([
     2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 17, 18, 19, 20, 21,
@@ -94,6 +144,7 @@ CINE_LOOKUP_TABLE = np.array([
     4014, 4022, 4031, 4039, 4048, 4056, 4064, 4095, 4095, 4095, 4095, 4095,
     4095, 4095, 4095, 4095])
 
+logger = logging.getLogger(APP_NAME)
 
 def load_image(file_path, average=False):
     """Load an image and convert it to a 2D/3D array"""
@@ -175,15 +226,16 @@ def get_hdf_data(file_path, dataset_path):
             return str(error), None
 
 
-def find_file(folder_path, file_ext=None):
+def find_file(folder_path, valid_exts=None):
     """
     Fast directory scanning using os.scandir.
-    Returns sorted full paths of image files.
+    Returns sorted full paths of files matching valid_exts.
     """
-    if file_ext is None:
+    if valid_exts is None:
         valid_exts = {".tif", ".tiff", ".jpg", ".jpeg", ".png"}
     else:
-        valid_exts = {".tif", ".tiff"}
+        valid_exts = {e.lower() if e.startswith(".") else f".{e.lower()}"
+                      for e in valid_exts}
     files = []
     try:
         with os.scandir(folder_path) as entries:
@@ -339,7 +391,7 @@ def get_time_stamps_cine(cine_path):
 
 def save_image(file_path, mat):
     """Save 2D array to an image (tif, jpg, png,...)"""
-    file_ext = os.path.splitext(file_path)[-1]
+    file_ext = os.path.splitext(file_path)[-1].lower()
     if not ((file_ext == ".tif") or (file_ext == ".tiff")):
         nmin, nmax = np.min(mat), np.max(mat)
         if nmin != nmax:
@@ -367,11 +419,11 @@ def save_table(file_path, data):
                 for item in data:
                     writer.writerow([item])
             elif data.ndim == 2:
-                if data.shape[0] * data.shape[1] < 4000000:
+                if data.size < CSV_MAX_ELEMENTS:
                     writer.writerows(data)
                 else:
-                    return "Array has more than 4,000,000 elements. " \
-                           "Operation not performed."
+                    return (f"Array has more than {CSV_MAX_ELEMENTS} "
+                            f"elements. Operation not performed.")
             else:
                 return "Data must be a 1D or 2D array"
     except Exception as error:
@@ -512,9 +564,8 @@ def export_hdf_cine_to_tif(parameters_dict, status_callback=None):
     except KeyError as e:
         raise ValueError(f"Missing required parameter: {e}")
     _report_status("Parameters validated...")
-    hdf_ext = (".nxs", "nx", ".h5", ".hdf", ".hdf5")
     file_name = os.path.basename(input_path)
-    if file_name.lower().endswith(hdf_ext):
+    if file_name.lower().endswith(HDF_EXT):
         file_type = "hdf"
         if hdf_key is None:
             raise ValueError("HDF file selected, but no HDF key was provided.")
@@ -631,4 +682,47 @@ def load_config():
         with open(config_path, "r") as f:
             return json.load(f)
     except FileNotFoundError:
+        return None
+
+
+def format_bytes(n: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    size = float(max(n, 0))
+    i = 0
+    while size >= 1024.0 and i < len(units) - 1:
+        size /= 1024.0
+        i += 1
+    if i == 0:
+        return f"{int(size)} {units[i]}"
+    return f"{size:.2f} {units[i]}"
+
+
+def get_file_created_size_lines(full_path: str):
+    try:
+        try:
+            st = os.stat(full_path)
+        except OSError:
+            st = os.lstat(full_path)
+
+        if hasattr(st, "st_birthtime"):
+            created_ts = st.st_birthtime
+            created_label = "Created"
+        else:
+            created_ts = st.st_ctime
+            created_label = "Changed"
+
+        created_str = datetime.datetime.fromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        size_bytes = int(getattr(st, "st_size", 0))
+        size_str = format_bytes(size_bytes)
+
+        return (
+            f"{created_label}: {created_str}",
+            f"Size: {size_str} ({size_bytes:,} bytes)",
+        )
+    except Exception as e:
+        try:
+            logger.debug(f"get_file_created_size_lines failed for {full_path}: {e}")
+        except Exception:
+            pass
         return None

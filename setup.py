@@ -5,7 +5,8 @@ dependencies = [
     "h5py",
     "hdf5plugin",
     "pillow",
-    "matplotlib"
+    "PySide6",
+    "pyqtgraph"
 ]
 
 HERE = pathlib.Path(__file__).parent
@@ -13,14 +14,14 @@ README = (HERE / "README.md").read_text()
 
 setuptools.setup(
     name="datview",
-    version="1.4.1",
+    version="2.0.0",
     author="Nghia Vo",
     author_email="nvo@bnl.gov",
     description="GUI software for viewing images, text, cine, and HDF files.",
     long_description=README,
     long_description_content_type="text/markdown",
     keywords=['HDF Viewer', 'CINE viewer', 'NXS Viewer', 'Image viewer',
-              "Data viewer"],
+              "Data viewer", "TEXT viewer"],
     url="https://github.com/algotom/datview",
     download_url="https://github.com/algotom/datview.git",
     license="Apache 2.0",

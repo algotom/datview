@@ -31,14 +31,17 @@ DatView has been developed following two key guidelines:
 -   Minimize dependencies and the codebase.
 -   Maximize functionality and maintainability.
 
-For distributing the software through Pip and Conda, the software is structured based on 
-the RUI (Rendering-Utilities-Interactions) concept, which is a user-friendly 
+For distributing the software through Pip and Conda, the software is structured 
+based on the RUI (Rendering-Utilities-Interactions) concept, which is a user-friendly 
 adaptation of the MVC design pattern.
 
 For the easiest usage, a monolithic codebase (**datview.py**) is provided, 
 allowing users to simply copy the file and run it without needing to install 
 the software through Pip or Conda, provided that their Python environment 
-includes H5py, Pillow, and Matplotlib.
+includes libraries in the requirements.txt.
+
+Starting from version 2.0, PySide6 and pyqtgraph are used instead of Tkinter 
+and Matplotlib to improve responsiveness and performance.
 
 Features
 ========
@@ -69,7 +72,7 @@ Features
 -   Viewing 1D or 2D datasets of an HDF file in table format.
 -   Opening multiple interactive viewers simultaneously.
 -   Saving a 2D array in a 3D dataset (HDF or CINE) as an image.
--   Saving a 1D or 2D dataset of an HDF file or the current line profile as a CSV file.
+-   Saving the current line profile as a CSV file.
 
 Installation
 ============
@@ -125,14 +128,3 @@ Generating the executable application
 - Use the **build_exe_app.py** script and run the following command:
   ```commandline
   python build_exe_app.py
-
-Usage
-=====
-
-- Double-click an HDF or CINE file to display its metadata.
-- Click "Interactive Viewer" to view images from a 3D dataset in an HDF file or 
-  from a folder of TIFF files.
-- Click "Save Image" to save the image you’re currently viewing in the 
-  Interactive-Viewer window of an HDF file.
-- Click "Save Table" to save a 1D or 2D array from an HDF dataset or a current line-profile
-  in interactive viewer, to a CSV file.

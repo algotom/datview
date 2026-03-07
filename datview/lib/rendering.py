@@ -1,791 +1,1199 @@
+"""
+Rendering module for DatView.
+Contains all UI window classes and custom widgets.
+"""
+
 import os
-import gc
-import json
-import logging
+import platform
+import re
 from pathlib import Path
-import importlib.resources
-import tkinter as tk
-import tkinter.font as tkFont
-from tkinter import ttk, messagebox, filedialog
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,
-                                               NavigationToolbar2Tk)
+import h5py
+import pyqtgraph as pg
+from PySide6.QtCore import (Qt, QTimer, Signal, QAbstractTableModel,
+                            QModelIndex, QSortFilterProxyModel, QRect, QFile,
+                            QIODevice, QTextStream, QSize)
+
+from PySide6.QtGui import (QFont, QColor, QTextCursor, QTextOption, QIcon,
+                           QTextDocument, QPainter, QFontMetrics,
+                           QSyntaxHighlighter, QTextCharFormat, QFontDatabase,
+                           QCursor)
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                               QHBoxLayout, QGridLayout, QLabel, QPushButton,
+                               QTreeWidget, QTreeWidgetItem, QListWidget,
+                               QComboBox, QSlider, QTextEdit, QMessageBox,
+                               QFileDialog, QFrame, QGroupBox, QSplitter,
+                               QTableWidget, QTableWidgetItem, QHeaderView,
+                               QAbstractItemView, QPlainTextEdit, QSizePolicy,
+                               QRadioButton, QStatusBar, QTableView, QLineEdit,
+                               QCheckBox, QMenu)
+
 import datview.lib.utilities as util
-if os.environ.get("DISPLAY") is None and os.environ.get("MPLBACKEND") is None:
-    matplotlib.use("Agg")
-else:
-    matplotlib.use("TkAgg")
-logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
-# ==============================================================================
-#                          GUI Rendering
-# ==============================================================================
+# Configure pyqtgraph
+pg.setConfigOptions(antialias=True, imageAxisOrder='row-major', background='w',
+                    foreground='k')
 
-
-FONT_SIZE = 11
-FONT_WEIGHT = "normal"
-TTK_THEME = "clam"
-MAIN_WIN_RATIO = 0.8
-TEXT_WIN_RATIO = 0.7
-PLT_WIN_3D_RATIO = 0.85
-PLT_WIN_2D_RATIO = 0.85
-PLT_WIN_1D_RATIO = 0.6
-PLT_1D_RATIO = 0.8
-HIST_WIN_RATIO = 0.9
-PLT_MAIN_FONTSIZE = 9
-PLT_TEXT_FONTSIZE = 8
-SCROLL_SENSITIVITY = 1
-IMAGE_EXT = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
-HDF_EXT = (".nxs", "nx", ".h5", ".hdf", ".hdf5")
-TEXT_EXT = (".json", ".out", ".err", ".txt", ".yaml")
-CINE_EXT = ".cine"
-
-
-def get_icon_path():
-    with importlib.resources.path("datview.assets",
-                                  "datview_icon.png") as icon:
-        return str(icon)
-
-
-class ToolTip:
-    """For creating a tooltip for a widget"""
-
-    def __init__(self, widget, text, delay=500):
-        self.widget = widget
-        self.text = text
-        self.tooltip = None
-        self.delay = delay
-        self._after_id = None
-        self.widget.bind("<Enter>", self.schedule_tooltip)
-        self.widget.bind("<Leave>", self.hide_tooltip)
-        self.widget.bind("<ButtonPress>", self.hide_tooltip)
-
-    def schedule_tooltip(self, event):
-        if self.tooltip:
-            return
-        if self._after_id:
-            self.widget.after_cancel(self._after_id)
-        self._after_id = self.widget.after(self.delay, self.show_tooltip)
-
-    def show_tooltip(self):
-        if not self._after_id:
-            return
-        self._after_id = None
-        try:
-            x, y, _, _ = self.widget.bbox("insert")
-            if x is None:
-                return
-            x += self.widget.winfo_rootx() + 25
-            y += self.widget.winfo_rooty() - 20
-        except tk.TclError:
-            return
-
-        self.tooltip = tk.Toplevel(self.widget)
-        self.tooltip.wm_overrideredirect(True)
-        self.tooltip.wm_geometry(f"+{x}+{y}")
-        label = ttk.Label(self.tooltip, text=self.text, background="yellow",
-                          relief="solid", borderwidth=1)
-        label.pack()
-
-    def hide_tooltip(self, event=None):
-        if self._after_id:
-            self.widget.after_cancel(self._after_id)
-            self._after_id = None
-        if self.tooltip:
-            self.tooltip.destroy()
-            self.tooltip = None
+THEME_QSS = f"""
+    QWidget {{
+        font-size: {util.FONT_SIZE}px;
+    }}
+    QGroupBox {{
+        border: 1px solid rgba(128, 128, 128, 60);
+        border-radius: 6px;
+        margin-top: 10px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0 6px;
+    }}
+    QFrame {{
+        border-radius: 6px;
+    }}
+    QPushButton {{
+        background-color: #ffffff;
+        border: 1px solid #d0d0d0;
+        border-radius: 6px;
+        padding: 6px 14px;
+    }}
+    QPushButton:hover {{
+        background-color: #f5f8ff;
+        border: 1px solid #3d84ff;
+    }}
+    QPushButton:pressed {{
+        background-color: #eaf1ff;
+    }}
+    QPushButton:disabled {{
+        background-color: #f5f5f5;
+        border: 1px solid #dddddd;
+        color: #9a9a9a;
+    }}
+    QPushButton:disabled {{
+        opacity: 0.5;
+    }}
+    QComboBox, QListWidget, QTreeWidget, QTextEdit, QPlainTextEdit, QLineEdit {{
+        border: 1px solid rgba(128, 128, 128, 60);
+        border-radius: 6px;
+        padding: 6px;
+    }}
+    QStatusBar {{
+        border-top: 1px solid rgba(128,128,128,60);
+        padding: 10px 10px;
+    }}
+    QStatusBar::item {{
+        border: none;
+    }}
+    QLabel#StatusPill {{
+        border: none;
+        padding: 0px 5px 8px 5px;
+        margin-left: 5px;
+    }}
+    QSplitter::handle {{
+        background: rgba(128, 128, 128, 40);
+    }}
+"""
 
 
-class DatviewToolbar(NavigationToolbar2Tk):
-    # Remove the "Configure subplots" button
-    toolitems = [t for t in NavigationToolbar2Tk.toolitems if
-                 t[0] != "Subplots"]
-
-
-class DatviewRendering(tk.Tk):
+def select_ui_font(point_size: int = 13, weight: int = QFont.Normal) -> QFont:
     """
-    For building GUI components.
+    Choose a UI font based on OS, using a priority list.
     """
-    def __init__(self):
-        super().__init__()
-        # Set GUI parameters
-        default_font = tkFont.nametofont("TkDefaultFont")
-        default_font.config(size=FONT_SIZE, weight=FONT_WEIGHT)
-        self.option_add("*Font", default_font)
-        self.screen_width = self.winfo_screenwidth()
-        self.screen_height = self.winfo_screenheight()
-        self.dpi = self.winfo_fpixels("1i")
-        width, height, x_offset, y_offset = self.define_window_geometry(
-            MAIN_WIN_RATIO)
-        self.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        try:
-            icon_path = get_icon_path()
-            if icon_path and Path(icon_path).exists():
-                icon = tk.PhotoImage(file=icon_path)
-                self.iconphoto(True, icon)
-        except (tk.TclError, TypeError):
-            pass
-        self.title("Data Viewer")
-        style = ttk.Style()
-        style.theme_use(TTK_THEME)
-        # Configure the main window's grid
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_rowconfigure(2, weight=0)
-        self.grid_columnconfigure(0, weight=0)
-        self.grid_columnconfigure(1, weight=1)
-        # For base-folder selection widgets
-        base_folder_frame = tk.LabelFrame(self, text="Base Folder", padx=0,
-                                          pady=0)
-        base_folder_frame.grid(row=0, column=0, columnspan=3, sticky="ew",
-                               padx=5, pady=0)
-        base_folder_frame.grid_columnconfigure(0, weight=1)
-        self.base_folder_label = tk.Label(base_folder_frame, text="")
-        self.base_folder_label.grid(row=0, column=0, sticky="w", pady=(0, 5))
-        self.select_base_folder_button = ttk.Button(base_folder_frame,
-                                                    text="Select Base Folder")
-        self.select_base_folder_button.grid(row=0, column=1, sticky="e",
-                                            padx=8, pady=(0, 8))
-        # For the tree-view of a folder hierarchy
-        self.folder_tree_view = ttk.Treeview(self, show="tree")
-        self.folder_tree_view.column("#0", width=350, minwidth=250,
-                                     stretch=tk.NO)
-        self.folder_tree_view.grid(row=1, rowspan=2, column=0, sticky="nsew",
-                                   padx=5, pady=5)
-        # For file-list viewing
-        self.file_list_view = tk.Listbox(self)
-        self.file_list_view.grid(row=1, column=1, sticky="nsew", padx=5,
-                                 pady=(5, 4))
-        self.file_list_scrollbar = tk.Scrollbar(
-            self, orient=tk.VERTICAL, command=self.file_list_view.yview)
-        self.file_list_scrollbar.grid(row=1, column=2, sticky="ns",
-                                      pady=(9, 9))
-        self.file_list_view.config(yscrollcommand=self.file_list_scrollbar.set)
-        self.file_list_scrollbar.config(command=self.file_list_view.yview)
-        # For viewer and saver frame
-        viewer_saver_frame = tk.Frame(self)
-        viewer_saver_frame.grid(row=2, column=1, columnspan=2, sticky="ew",
-                                padx=1, pady=2)
-        # Interactive-viewer button
-        self.interactive_viewer_button = ttk.Button(viewer_saver_frame,
-                                                    width=20,
-                                                    text="Interactive Viewer")
-        self.interactive_viewer_button.grid(row=0, column=0, sticky="w",
-                                            padx=5, pady=(0, 5))
-        ttip_viewer_button = ("View a dataset (array) in a HDF file, "
-                              "or multiple image files in a folder")
-        ToolTip(self.interactive_viewer_button, ttip_viewer_button)
-        # Table-viewer button
-        self.table_viewer_button = ttk.Button(viewer_saver_frame, width=20,
-                                              text="Table Viewer")
-        self.table_viewer_button.grid(row=0, column=1, sticky="w", padx=5,
-                                      pady=(0, 5))
-        ToolTip(self.table_viewer_button, "Show the table format of "
-                                          "a 1D- or 2D-array")
-        # HDF keys combobox
-        self.hdf_key_list = ttk.Combobox(viewer_saver_frame, state="disabled",
-                                         width=40)
-        self.hdf_key_list.grid(row=0, column=2, sticky="w", padx=5,
-                               pady=(0, 5))
-        ToolTip(self.hdf_key_list, "HDF keys to array-like datasets")
-        # Save-image button
-        self.save_image_button = ttk.Button(viewer_saver_frame, width=20,
-                                            text="Save image")
-        self.save_image_button.grid(row=1, column=0, sticky="w", padx=5,
-                                    pady=(0, 5))
-        ttip_save_image_button = "Save a slice of 3d-array dataset to image"
-        ToolTip(self.save_image_button, ttip_save_image_button)
-        # Save-table button
-        self.save_table_button = ttk.Button(viewer_saver_frame, width=20,
-                                            text="Save table")
-        self.save_table_button.grid(row=1, column=1, sticky="w", padx=5,
-                                    pady=(0, 5))
-        ttip_save_table_button = "Save 1d- or 2d-array dataset to a csv file"
-        ToolTip(self.save_table_button, ttip_save_table_button)
-        # Export-to-tif button
-        self.export_tif_button = ttk.Button(viewer_saver_frame, width=20,
-                                            text="Export to tif")
-        self.export_tif_button.grid(row=1, column=2, sticky="w", padx=5,
-                                    pady=(0, 5))
-        ttip_export_tif_button = "Export 3d-array HDF/CINE dataset to " \
-                                 "TIF files"
-        ToolTip(self.export_tif_button, ttip_export_tif_button)
-        # Status bar
-        self.status_bar = tk.Text(self, height=1, state="disabled",
-                                  wrap="none", bg="lightgrey")
-        self.status_bar.grid(row=3, column=0, columnspan=3, sticky="ew",
-                             padx=5, pady=(0, 5))
+    sysname = platform.system()
+    families = set(QFontDatabase.families())
 
-    def define_window_geometry(self, ratio):
-        """Specify size of a widget window"""
-        width = int(self.screen_width * ratio)
-        height = int(self.screen_height * ratio)
-        max_ratio = 1.65
-        if width > height:
-            ratio = width / height
-            if ratio > max_ratio:
-                width = int(max_ratio * height)
-        else:
-            ratio = height / width
-            if ratio > max_ratio:
-                height = int(max_ratio * width)
-        x_offset = (self.screen_width - width) // 2
-        y_offset = (self.screen_height - height) // 2
-        return width, height, x_offset, y_offset
+    if sysname == "Linux":
+        priority = [
+            "Liberation Sans",
+            "Cantarell",
+            "Ubuntu",
+            "Noto Sans",
+            "DejaVu Sans",
+        ]
+    elif sysname == "Windows":
+        priority = [
+            "Segoe UI",
+            "Calibri",
+            "Arial",
+            "Tahoma",
+        ]
+    elif sysname == "Darwin":
+        priority = [
+            ".SF NS Text",
+            "Helvetica Neue",
+            "Helvetica",
+            "Arial",
+        ]
+    else:
+        priority = [
+            "Noto Sans",
+            "DejaVu Sans",
+            "Arial",
+        ]
 
-    def display_text_file(self, file_path):
-        """Display content of a text file or cine metadata in a new window"""
-        extension = Path(file_path).suffix.lower()
-        try:
-            text_window = tk.Toplevel(self)
-            text_window.title(f"Viewing: {file_path}")
-            width, height, x_offset, y_offset = self.define_window_geometry(
-                TEXT_WIN_RATIO)
-            text_window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
+    chosen = None
+    for name in priority:
+        if name in families:
+            chosen = name
+            break
 
-            text_area = tk.Text(text_window, wrap=tk.WORD)
-            text_scrollbar = tk.Scrollbar(text_window, orient=tk.VERTICAL,
-                                          command=text_area.yview)
-            text_area.config(yscrollcommand=text_scrollbar.set)
-            text_area.pack(side=tk.LEFT, expand=True, fill="both")
-            text_scrollbar.pack(side=tk.RIGHT, fill="y")
-            if extension == ".cine":
-                metadata = util.get_metadata_cine(file_path)
-                formatted_metadata = json.dumps(metadata, indent=4)
-                text_area.insert(tk.END, formatted_metadata)
-            else:
-                with open(file_path, "r") as file:
-                    content = file.read()
-                text_area.insert(tk.END, content)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to open the file: {e}")
-
-    def show_1d_data(self, array_1d, help_text="", title=""):
-        """Display a graph of 1d data."""
-        width, height, x_offset, y_offset = self.define_window_geometry(
-            PLT_WIN_1D_RATIO)
-        window_1d = tk.Toplevel(self)
-        window_1d.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        window_1d.title(title)
-        try:
-            dpi = window_1d.winfo_fpixels("1i") + 30
-        except:
-            dpi = 96
-        try:
-            default_font = tkFont.nametofont("TkDefaultFont")
-            font_family = default_font.cget("family")
-            plt.rcParams.update({'font.family': font_family,
-                                 'font.size': FONT_SIZE})
-        except:
-            pass
-        fig, ax = plt.subplots(figsize=((width / dpi) * PLT_1D_RATIO,
-                                        (height / dpi) * PLT_1D_RATIO),
-                               dpi=dpi)
-        ax.plot(array_1d, color="blue", linewidth=1.0)
-        ax.set_aspect("auto")
-        if len(help_text) > 0:
-            ax.set_title(help_text)
-        plt.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, master=window_1d)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = DatviewToolbar(canvas, window_1d)
-        toolbar.update()
-        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        def on_close():
-            plt.close(fig)
-            window_1d.destroy()
-
-        window_1d.protocol("WM_DELETE_WINDOW", on_close)
-
-    def table_viewer(self, data, title="Array Table Viewer"):
-        """Display 1d or 2d-data as table format"""
-        table_window = tk.Toplevel(self)
-        table_window.title(title)
-        width, height, x_offset, y_offset = self.define_window_geometry(
-            TEXT_WIN_RATIO)
-        table_window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        text_widget = tk.Text(table_window, wrap="none", font=("Courier", 11))
-        text_widget.grid(row=0, column=0, sticky="nsew")
-        vsb = tk.Scrollbar(table_window, orient="vertical",
-                           command=text_widget.yview)
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb = tk.Scrollbar(table_window, orient="horizontal",
-                           command=text_widget.xview)
-        hsb.grid(row=1, column=0, sticky="ew")
-        text_widget.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        def format_value(val):
-            """Format the values with proper width"""
-            if isinstance(val, float):
-                return f"{val:.5g}" if abs(val) < 1e-5 or abs(
-                    val) > 1e5 else f"{val:.5f}"
-            return str(val)
-
-        def calculate_max_width(data_t, headers):
-            """Calculate the maximum width for each column"""
-            col_widths = [len(header) for header in headers]
-            for i in range(data_t.shape[0]):
-                for j in range(data_t.shape[1]):
-                    val_length = len(format_value(data_t[i, j]))
-                    col_widths[j] = max(col_widths[j], val_length)
-            return col_widths
-
-        def format_table_row(row_values, col_widths):
-            """Format the row based on column widths"""
-            return " ".join([f"{val:>{width_t}}" for val, width_t in
-                             zip(row_values, col_widths)])
-
-        row_index_width = len(f"Row {data.shape[0] - 1}: ")
-        text_length = len(str(data.shape[0] - 1))
-
-        def display_array_as_text():
-            """Format and display the data in the Text widget"""
-            nonlocal row_index_width, text_length
-            if len(data.shape) == 1:
-                for i in range(data.shape[0]):
-                    formatted_value = format_value(data[i])
-                    msg = f"Row {i:0{text_length}}: {formatted_value}\n"
-                    text_widget.insert(tk.END, msg)
-            else:
-                headers = [f"Col {j:0{text_length}}" for j in
-                           range(data.shape[1])]
-                col_widths = calculate_max_width(data, headers)
-                header = " " * row_index_width \
-                         + format_table_row(headers[:], col_widths[:]) + "\n"
-                text_widget.insert(tk.END, header)
-                for i in range(data.shape[0]):
-                    row_header = f"Row {i:0{text_length}}: "  # Row header
-                    row_values = [format_value(data[i, j]) for j in
-                                  range(data.shape[1])]
-                    text_widget.insert(tk.END, row_header + format_table_row(
-                        row_values, col_widths[:]) + "\n")
-
-        display_array_as_text()
-        table_window.grid_rowconfigure(0, weight=1)
-        table_window.grid_columnconfigure(0, weight=1)
-
-        def on_close():
-            table_window.destroy()
-
-        table_window.protocol("WM_DELETE_WINDOW", on_close)
-
-    def show_histogram(self, mat, help_text="", title=""):
-        """Display histogram of an image."""
-        width, height, x_offset, y_offset = self.define_window_geometry(
-            PLT_WIN_1D_RATIO)
-        hist_window = tk.Toplevel(self)
-        hist_window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        hist_window.title(title)
-        try:
-            dpi = hist_window.winfo_fpixels("1i") + 30
-        except:
-            dpi = 96
-        try:
-            default_font = tkFont.nametofont("TkDefaultFont")
-            font_family = default_font.cget("family")
-            plt.rcParams.update({'font.family': font_family,
-                                 'font.size': FONT_SIZE})
-        except:
-            pass
-        flat_data = mat.ravel()
-        try:
-            p1 = np.percentile(flat_data, 0.5)
-            p99 = np.percentile(flat_data, 99.5)
-            # Handle edge case where data is all one value
-            if p1 == p99:
-                p1 = flat_data.min() - 1
-                p99 = flat_data.max() + 1
-            hist_range = (p1, p99)
-        except IndexError:
-            hist_range = None
-        num_bins = 256
-        hist, bin_edges = np.histogram(flat_data, bins=num_bins,
-                                       range=hist_range)
-        bin_widths = bin_edges[1:] - bin_edges[:-1]
-        fig, ax = plt.subplots(figsize=((width / dpi) * HIST_WIN_RATIO,
-                                        (height / dpi) * HIST_WIN_RATIO),
-                               dpi=dpi)
-        ax.bar(bin_edges[:-1], hist, width=bin_widths,
-               color='gray', edgecolor='black', alpha=0.5,
-               align='edge',
-               label=f"Num bins: {num_bins}")
-        ax.set_title("Histogram " + help_text)
-        ax.set_xlabel("Grayscale")
-        ax.set_ylabel("Frequency (Count)")
-        ax.legend()
-        plt.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, master=hist_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = DatviewToolbar(canvas, hist_window)
-        toolbar.update()
-        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        def on_close():
-            plt.close(fig)
-            hist_window.destroy()
-
-        hist_window.protocol("WM_DELETE_WINDOW", on_close)
-
-    def show_statistics_table(self, stats_dict, help_text="",
-                              title="Image Statistics"):
-        """
-        Display calculated statistics. Input is a dictionary from
-        get_image_statistics.
-        """
-        if stats_dict is None:
-            messagebox.showwarning("No Data",
-                                   "No statistics to display")
-            return
-        stat_window = tk.Toplevel(self)
-        stat_window.title(title + " | " + help_text)
-        stat_window.resizable(True, False)
-        parent_x = self.winfo_x()
-        parent_y = self.winfo_y()
-        parent_w = self.winfo_width()
-        parent_h = self.winfo_height()
-        win_w = stat_window.winfo_width()
-        win_h = stat_window.winfo_height()
-        x = parent_x + (parent_w - win_w) // 2
-        y = parent_y + (parent_h - win_h) // 2
-        stat_window.geometry(f"+{x}+{y}")
-
-        tree = ttk.Treeview(stat_window, columns=("Metric", "Value"),
-                            show="headings")
-        tree.heading("Metric", text="Metric")
-        tree.heading("Value", text="Value")
-        tree.column("Metric", width=150)
-        tree.column("Value", width=220, anchor="e")
-        tree.pack(padx=10, pady=10)
-        for metric, value in stats_dict.items():
-            formatted_value = f"{value:.5f}"
-            tree.insert("", "end", values=(metric, formatted_value))
-        stat_window.update_idletasks()
-
-    def show_percentile_plot(self, percentiles, density, help_text="",
-                             title=""):
-        """
-        Displays a percentile density plot.
-        percentiles: The x-axis values (percentiles).
-        density: The y-axis values (normalized density).
-        """
-        width, height, x_offset, y_offset = self.define_window_geometry(
-            PLT_WIN_1D_RATIO)
-        perc_window = tk.Toplevel(self)
-        perc_window.geometry(f"{width}x{height}+{x_offset}+{y_offset}")
-        perc_window.title(title)
-        try:
-            dpi = perc_window.winfo_fpixels("1i") + 30
-        except:
-            dpi = 96
-        try:
-            default_font = tkFont.nametofont("TkDefaultFont")
-            font_family = default_font.cget("family")
-            plt.rcParams.update({'font.family': font_family,
-                                 'font.size': FONT_SIZE})
-        except:
-            pass
-
-        fig, ax = plt.subplots(figsize=((width / dpi) * PLT_1D_RATIO,
-                                        (height / dpi) * PLT_1D_RATIO),
-                               dpi=dpi)
-        ax.plot(percentiles, density, marker='.', linestyle='-', color='blue')
-        ax.set_title("Percentile density " + help_text)
-        ax.set_xlabel("Percentile")
-        ax.set_ylabel("Normalized density")
-        ax.grid(True, linestyle='--', alpha=0.6)
-        ax.set_xlim(0, 100)
-        plt.tight_layout()
-
-        canvas = FigureCanvasTkAgg(fig, master=perc_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        toolbar = DatviewToolbar(canvas, perc_window)
-        toolbar.update()
-        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        def on_close():
-            plt.close(fig)
-            perc_window.destroy()
-
-        perc_window.protocol("WM_DELETE_WINDOW", on_close)
-
-    def show_2d_image(self, img, file_path=""):
-        """
-        Display an image with sliders for adjusting contrast
-        """
-        current_image = np.asarray(img)
-        is_color = False
-        if current_image.ndim == 3 and current_image.shape[2] in [3, 4]:
-            is_color = True
-            nmin, nmax = np.min(current_image), np.max(current_image)
-            if nmax > nmin:
-                current_image = (current_image - nmin) / (nmax - nmin)
-            current_image = np.clip(current_image, 0.0, 1.0)
-        if np.isnan(current_image).any():
-            current_image = np.nan_to_num(current_image)
-
-        settings = self.define_window_geometry(PLT_WIN_2D_RATIO)
-        win_width, win_height, x_offset, y_offset = settings
-
-        window_2d = tk.Toplevel(self)
-        window_2d.title(f"Viewing: {os.path.basename(file_path)}")
-        window_2d.geometry(f"{win_width}x{win_height}+{x_offset}+{y_offset}")
-        window_2d.message_text_var = tk.StringVar(master=window_2d,
-                                                  value=file_path)
-
-        min_contrast_var = tk.DoubleVar(master=window_2d, value=0.0)
-        max_contrast_var = tk.DoubleVar(master=window_2d, value=1.0)
-        min_contrast_label_var = tk.StringVar(master=window_2d, value="0.0")
-        max_contrast_label_var = tk.StringVar(master=window_2d, value="100.0")
-
-        try:
-            dpi = window_2d.winfo_fpixels("1i") + 30
-        except:
-            dpi = 96
-        try:
-            default_font = tkFont.nametofont("TkDefaultFont")
-            font_family = default_font.cget("family")
-            plt.rcParams.update({'font.family': font_family,
-                                 'font.size': FONT_SIZE})
-        except:
-            pass
-
-        # Button style
-        style = ttk.Style()
-        style.theme_use(TTK_THEME)
-        style.configure("Short.TButton", padding=[5, 1, 5, 1])
-
-        window_2d.rowconfigure(0, weight=1)
-        window_2d.rowconfigure(1, weight=0)
-        window_2d.rowconfigure(2, weight=0)
-        window_2d.columnconfigure(0, weight=1)
-
-        canvas_frame = ttk.Frame(window_2d)
-        canvas_frame.grid(row=0, column=0, sticky="nsew")
-        control_frame = ttk.Frame(window_2d)
-        control_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
-        status_frame = ttk.Frame(window_2d, relief=tk.SUNKEN, borderwidth=1)
-        status_frame.grid(row=2, column=0, sticky="ew")
-        status_frame.rowconfigure(0, weight=1)
-        status_frame.columnconfigure(0, weight=1)
-        message_label = ttk.Label(status_frame,
-                                  textvariable=window_2d.message_text_var,
-                                  wraplength=win_width, anchor=tk.W)
-        message_label.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
-        fig_img, ax_img = plt.subplots(constrained_layout=True, dpi=dpi)
-        ax_img.set_title(f"Height x Width : {current_image.shape[0]} "
-                         f"x {current_image.shape[1]}")
-        ax_img.set_xlabel("X")
-        ax_img.set_ylabel("Y")
-        ax_img.set_aspect("equal")
-
-        if is_color:
-            slice0 = ax_img.imshow(current_image)
-        else:
-            vmin_init = np.percentile(current_image, 0)
-            vmax_init = np.percentile(current_image, 100)
-            slice0 = ax_img.imshow(current_image, cmap="gray",
-                                   vmin=vmin_init, vmax=vmax_init)
-
-        canvas_frame.rowconfigure(0, weight=1)
-        canvas_frame.rowconfigure(1, weight=0)
-        canvas_frame.columnconfigure(0, weight=1)
-        window_2d.update_idletasks()
-        canvas_img = FigureCanvasTkAgg(fig_img, master=canvas_frame)
-        canvas_img.draw()
-        canvas_img.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-
-        toolbar_frame = ttk.Frame(canvas_frame)
-        toolbar_frame.grid(row=1, column=0, sticky="ew")
-        toolbar_frame.columnconfigure(0, weight=1)
-        toolbar = DatviewToolbar(canvas_img, toolbar_frame)
-        toolbar.update()
-        toolbar.grid(row=0, column=0, sticky="ew")
-
-        if not is_color:
-            control_frame.columnconfigure(0, weight=0)
-            control_frame.columnconfigure(1, weight=1)
-            control_frame.columnconfigure(2, weight=0)
-            control_frame.columnconfigure(3, weight=0)
-            control_frame.columnconfigure(4, weight=0)
-            control_frame.rowconfigure(0, weight=0)
-            control_frame.rowconfigure(1, weight=0)
-            ttk.Label(control_frame,
-                      text="Min %:").grid(row=0, column=0, sticky='w',
-                                          padx=(10, 5), pady=(5, 0))
-            min_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
-                                   orient=tk.HORIZONTAL,
-                                   variable=min_contrast_var)
-            min_slider.grid(row=0, column=1, sticky='ew', padx=5, pady=(5, 0))
-            min_label = ttk.Label(control_frame,
-                                  textvariable=min_contrast_label_var, width=5)
-            min_label.grid(row=0, column=2, sticky='w', padx=(0, 10),
-                           pady=(5, 0))
-
-            ttk.Label(control_frame,
-                      text="Max %:").grid(row=1, column=0, sticky='w',
-                                          padx=(10, 5), pady=(0, 5))
-            max_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
-                                   orient=tk.HORIZONTAL,
-                                   variable=max_contrast_var)
-            max_slider.grid(row=1, column=1, sticky='ew', padx=5, pady=(0, 5))
-            max_label = ttk.Label(control_frame,
-                                  textvariable=max_contrast_label_var, width=5)
-            max_label.grid(row=1, column=2, sticky='w', padx=(0, 10),
-                           pady=(0, 5))
-
-            reset_button = ttk.Button(control_frame, text="Reset",
-                                      style="Short.TButton")
-            reset_button.grid(row=0, column=3, sticky='ew', padx=5, pady=5)
-
-            statistics_button = ttk.Button(control_frame, text="Statistics",
-                                           style="Short.TButton")
-            statistics_button.grid(row=0, column=4, sticky='ew', padx=(0, 5),
-                                   pady=5)
-
-            histogram_button = ttk.Button(control_frame, text="Histogram",
-                                          style="Short.TButton")
-            histogram_button.grid(row=1, column=3, sticky='ew', padx=5,
-                                  pady=(0, 5))
-
-            percentile_button = ttk.Button(control_frame, text="Percentile",
-                                           style="Short.TButton")
-            percentile_button.grid(row=1, column=4, sticky='ew', padx=(0, 5),
-                                   pady=(0, 5))
-
-            aspect_var = tk.StringVar(master=window_2d, value="equal")
-            aspect_label = ttk.Label(control_frame, text="Aspect")
-            aspect_combo = ttk.Combobox(control_frame, textvariable=aspect_var,
-                                        values=["equal", "auto"], width=5)
-            aspect_label.grid(row=0, column=5, sticky='w', padx=0, pady=5)
-            aspect_combo.grid(row=1, column=5, sticky='ewns', padx=(0, 5),
-                              pady=(0, 5))
-
-            def update_aspect_ratio(event=None):
-                """
-                Updates the aspect ratio.
-                """
-                val = aspect_var.get().strip()
-                if val.lower() in ["equal", "auto"]:
-                    new_aspect = val.lower()
-                else:
-                    try:
-                        new_aspect = float(val)
-                    except ValueError:
-                        aspect_var.set("equal")
-                        new_aspect = "equal"
-                ax_img.set_aspect(new_aspect)
-                canvas_img.draw_idle()
-
-            aspect_combo.bind("<<ComboboxSelected>>", update_aspect_ratio)
-            aspect_combo.bind("<Return>", update_aspect_ratio)
-
-        if not is_color:
-
-            def on_contrast_change(value):
-                min_val = min_contrast_var.get()
-                max_val = max_contrast_var.get()
-                p_min = min_val * 100.0
-                p_max = max_val * 100.0
-                min_contrast_label_var.set(f"{p_min:.1f}")
-                max_contrast_label_var.set(f"{p_max:.1f}")
-                if p_min >= p_max:
-                    if p_max > 0.0:
-                        p_min = p_max - 0.1
-                        min_contrast_var.set(p_min / 100.0)
-                    else:
-                        p_min, p_max = 0.0, 0.1
-                        min_contrast_var.set(0.0)
-                        max_contrast_var.set(0.001)
-                vmin = np.percentile(current_image, p_min)
-                vmax = np.percentile(current_image, p_max)
-                if vmin == vmax:  # Handle flat data
-                    vmin = vmin - 0.5
-                    vmax = vmax + 0.5
-                slice0.set_clim(vmin, vmax)
-                canvas_img.draw_idle()
-
-            def reset_contrast(event=None):
-                """
-                Resets the contrast sliders and updates the image.
-                """
-                min_contrast_var.set(0.0)
-                max_contrast_var.set(1.0)
-                on_contrast_change(None)
-
-            def open_statistics():
-                if current_image is None:
-                    messagebox.showwarning("No Image",
-                                           "No image data to analyze.")
-                    return
-                stats = util.get_image_statistics(current_image)
-                title = f"Statistics: {os.path.basename(file_path)}"
-                self.show_statistics_table(stats, title=title)
-
-            def open_histogram():
-                if current_image is None:
-                    messagebox.showwarning("No Image",
-                                           "No image data to analyze.")
-                    return
-                title = f"Histogram: {os.path.basename(file_path)}"
-                self.show_histogram(current_image, help_text="",
-                                    title=title)
-
-            def open_percentile():
-                if current_image is None:
-                    messagebox.showwarning("No Image",
-                                           "No image data to analyze.")
-                    return
-                try:
-                    percentiles, density = util.get_percentile_density(
-                        current_image)
-                except ValueError as e:
-                    messagebox.showerror("Error",
-                                         f"Could not get percentiles:\n{e}")
-                    return
-                title = f"Percentile plot: {os.path.basename(file_path)}"
-                self.show_percentile_plot(percentiles, density, title=title)
-
-            min_slider.config(command=on_contrast_change)
-            max_slider.config(command=on_contrast_change)
-            reset_button.config(command=reset_contrast)
-            statistics_button.config(command=open_statistics)
-            histogram_button.config(command=open_histogram)
-            percentile_button.config(command=open_percentile)
-
-        def on_close():
-            plt.close(fig_img)
-            window_2d.destroy()
-
-        window_2d.protocol("WM_DELETE_WINDOW", on_close)
+    font = QFont(chosen) if chosen else QFont()
+    font.setPointSize(point_size)
+    return font
 
 
-class InteractiveViewer:
-    """
-    A standalone class managing a single interactive viewer window.
-    """
+def calculate_geometry(ratio=0.8):
+    """Calculate window size and position centered on screen"""
+    screen = QApplication.primaryScreen().availableGeometry()
+    width = int(screen.width() * ratio)
+    height = int(screen.height() * ratio)
+    max_ratio = 1.65
+    if width > height:
+        current_ratio = width / height
+        if current_ratio > max_ratio:
+            width = int(max_ratio * height)
+    else:
+        current_ratio = height / width
+        if current_ratio > max_ratio:
+            height = int(max_ratio * width)
+    x = screen.center().x() - width // 2
+    y = screen.center().y() - height // 2
+    return QRect(x, y, width, height)
 
-    def __init__(self, main_window, main_app, file_path, file_type,
-                 hdf_key=None, list_files=None):
 
-        self.main_win = main_window
-        self.main_app = main_app
-        self.file_type = file_type
+def apply_app_theme(app: QApplication):
+    app.setStyle("Fusion")
+    pal = app.style().standardPalette()
+    app.setPalette(pal)
+    app.setStyleSheet(THEME_QSS)
+
+
+class BaseWindow(QWidget):
+    """Base helper for windows to set common properties"""
+    closed = Signal(object)
+
+    def __init__(self, parent=None, title="Window", ratio=0.8):
+        qt_parent = parent if isinstance(parent, QWidget) else None
+        super().__init__(qt_parent)
+        self.setWindowFlags(Qt.Window)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowTitle(title)
+        self.setGeometry(calculate_geometry(ratio))
+
+    def closeEvent(self, event):
+        self.closed.emit(self)
+        super().closeEvent(event)
+
+
+class HDFViewerWindow(BaseWindow):
+    """Display HDF file hierarchy and dataset info"""
+    sig_item_double_clicked = Signal(str, str)
+
+    def __init__(self, parent=None, file_path="", ratio=util.TEXT_WIN_RATIO):
+        super().__init__(parent, f"HDF Viewer: {file_path}", ratio)
         self.file_path = file_path
+        # --- Outer layout
+        main = QVBoxLayout(self)
+        m_val = 4
+        main.setContentsMargins(m_val, m_val, m_val, m_val)
+        main.setSpacing(2)
+        # --- Splitter
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(0)
+        # ===== Left Pane: Tree (inside a padded frame) =====
+        left_frame = QFrame()
+        left_layout = QVBoxLayout(left_frame)
+        left_layout.setContentsMargins(m_val, m_val, m_val, m_val)
+        left_layout.setSpacing(0)
+
+        self.tree_widget = QTreeWidget()
+        self.tree_widget.setHeaderLabel("HDF File Hierarchy")
+        self.tree_widget.setIndentation(10)
+        self.tree_widget.setUniformRowHeights(True)
+        self.tree_widget.itemSelectionChanged.connect(self.on_selection_changed)
+        self.tree_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
+
+        left_layout.addWidget(self.tree_widget)
+        self.splitter.addWidget(left_frame)
+
+        # ===== Right Pane: Info (inside a padded frame) =====
+        right_frame = QFrame()
+        right_layout = QVBoxLayout(right_frame)
+        right_layout.setContentsMargins(m_val, m_val, m_val, m_val)
+        right_layout.setSpacing(0)
+
+        title = QLabel("Brief Information")
+        f = QFont(QApplication.font())
+        title.setFont(f)
+
+        self.info_text = QTextEdit()
+        self.info_text.setReadOnly(True)
+
+        right_layout.addWidget(title, 0)
+        right_layout.addWidget(self.info_text, 1)
+
+        self.splitter.addWidget(right_frame)
+
+        # Split ratio
+        self.splitter.setStretchFactor(0, 9)
+        self.splitter.setStretchFactor(1, 8)
+
+        main.addWidget(self.splitter, 1)
+        try:
+            self.hdf_file = h5py.File(file_path, "r")
+            self.populate_tree()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open HDF file: {e}")
+
+    def populate_tree(self):
+        def add_node(parent_item, name, obj):
+            item = QTreeWidgetItem(parent_item)
+            item.setText(0, name.split("/")[-1] if "/" in name else name)
+            item.setData(0, Qt.UserRole, name)
+            if isinstance(obj, h5py.Group):
+                for subname, subobj in obj.items():
+                    add_node(item, f"{name}/{subname}".strip("/"), subobj)
+
+        for item_name, item in self.hdf_file.items():
+            add_node(self.tree_widget, item_name, item)
+        self.tree_widget.expandAll()
+
+    def on_selection_changed(self):
+        selected = self.tree_widget.selectedItems()
+        if not selected:
+            return
+        hdf_path = selected[0].data(0, Qt.UserRole)
+
+        data_type, value = util.get_hdf_data(self.file_path, hdf_path)
+
+        info = f"HDF Path: {hdf_path}\n"
+        info += f"Data Type: {data_type}\n"
+        if data_type == "array":
+            info += f"Shape: {value}"
+        else:
+            info += f"Value: {value}"
+
+        self.info_text.setPlainText(info)
+
+    def on_item_double_clicked(self, item: QTreeWidgetItem, _col: int):
+        hdf_path = item.data(0, Qt.UserRole)
+        if not hdf_path:
+            return
+        self.sig_item_double_clicked.emit(self.file_path, str(hdf_path))
+
+    def closeEvent(self, event):
+        if hasattr(self, 'hdf_file'):
+            self.hdf_file.close()
+        super().closeEvent(event)
+
+
+class PlotWindow1D(BaseWindow):
+    """Window for 1D plots using pyqtgraph"""
+    def __init__(self, parent=None, title="", data_x=None, data_y=None,
+                 plot_type="plot", help_text="", ratio=util.PLT_WIN_1D_RATIO):
+        super().__init__(parent, title, ratio)
+        layout = QVBoxLayout(self)
+
+        self.plot_widget = pg.PlotWidget(title=help_text)
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.2)
+        layout.addWidget(self.plot_widget)
+        gui_font = QApplication.font()
+
+        plot_font = QFont(gui_font)
+        plot_font.setPointSize(max(8, gui_font.pointSize() - 3))
+
+        for axis_name in ("bottom", "left"):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setTickFont(plot_font)
+            axis.label.setFont(plot_font)
+
+        self.plot_widget.getPlotItem().titleLabel.setFont(plot_font)
+
+        if plot_type == "plot":
+            if data_x is not None:
+                self.plot_widget.plot(data_x, data_y, pen='b')
+            else:
+                self.plot_widget.plot(data_y, pen='b')
+
+        elif plot_type == "histogram":
+            flat_data = data_y.ravel()
+            try:
+                p_min = np.percentile(flat_data, util.HIST_P_MIN)
+                p_max = np.percentile(flat_data, util.HIST_P_MAX)
+                if p_min == p_max:
+                    p_min = flat_data.min() - 0.5
+                    p_max = flat_data.max() + 0.5
+                hist_range = (p_min, p_max)
+            except IndexError:
+                hist_range = None
+
+            hist, bin_edges = np.histogram(flat_data, bins=util.HIST_NUM_BINS,
+                                           range=hist_range)
+            bargraph = pg.BarGraphItem(x=bin_edges[:-1], height=hist,
+                                       width=np.diff(bin_edges), brush='b')
+            self.plot_widget.addItem(bargraph)
+            self.plot_widget.setLabel('bottom', "Grayscale")
+            self.plot_widget.setLabel('left', "Frequency (Count)")
+
+        elif plot_type == "percentile":
+            self.plot_widget.plot(data_x, data_y, pen='b', symbol='o',
+                                  symbolSize=5)
+            self.plot_widget.setLabel('bottom', "Percentile")
+            self.plot_widget.setXRange(0, 100)
+            self.plot_widget.setLabel('left', "Normalized density")
+            self.plot_widget.showGrid(x=True, y=True, alpha=0.6)
+
+
+def _fmt(color, bold=False, italic=False):
+    f = QTextCharFormat()
+    f.setForeground(QColor(color))
+    if bold:
+        f.setFontWeight(QFont.Bold)
+    if italic:
+        f.setFontItalic(True)
+    return f
+
+
+class MiniHighlighter(QSyntaxHighlighter):
+    """
+    Modes: 'python', 'json', 'yaml', 'log'
+    - Python supports triple-quote multiline strings
+    - YAML highlights keys, strings, numbers, booleans, comments
+    - Log highlights ERROR/WARNING/INFO tokens (and common variants)
+    """
+
+    PY_TRIPLE_SINGLE = 1
+    PY_TRIPLE_DOUBLE = 2
+
+    def __init__(self, document, mode: str):
+        super().__init__(document)
+        self.mode = mode.lower()
+        self.f_comment = _fmt("#888888", italic=True)
+        self.f_string = _fmt("#008000")
+        self.f_number = _fmt("#AA00AA")
+        self.f_kw = _fmt("#0033CC", bold=True)
+        self.f_key = _fmt("#0033CC", bold=True)  # yaml/json keys
+        self.f_bool = _fmt("#AA5500", bold=True)
+
+        self.f_err = _fmt("#CC0000", bold=True)
+        self.f_warn = _fmt("#CC7A00", bold=True)
+        self.f_info = _fmt("#0066CC", bold=True)
+
+        self._re_num = re.compile(r"\b\d+(\.\d+)?([eE][+-]?\d+)?\b")
+
+        if self.mode == "python":
+            kws = (
+                "and as assert break class continue def del elif else except "
+                "False finally for from global if import in is lambda None "
+                "nonlocal not or pass raise  return True try while with yield"
+            ).split()
+            self._py_kw = [re.compile(rf"\b{k}\b") for k in kws]
+            self._py_comment = re.compile(r"#.*")
+            self._py_sq = re.compile(r"'([^'\\]|\\.)*'")
+            self._py_dq = re.compile(r'"([^"\\]|\\.)*"')
+        elif self.mode in ("json", "yaml"):
+            # YAML: key before ":" ; JSON: "key":
+            self._re_yaml_key = re.compile(r"^\s*([A-Za-z0-9_\-\.]+)\s*:", re.M)
+            self._re_json_key = re.compile(r'"([^"\\]|\\.)*"\s*:')
+            self._re_str = re.compile(r'"([^"\\]|\\.)*"|\'([^\'\\]|\\.)*\'')
+            self._re_bool = re.compile(
+                r"\b(true|false|null|True|False|None|yes|no|on|off)\b")
+            self._re_comment = re.compile(r"#.*")
+        elif self.mode == "log":
+            self._re_err = re.compile(r"\b(ERROR|ERR|FATAL|CRITICAL)\b")
+            self._re_warn = re.compile(r"\b(WARNING|WARN)\b")
+            self._re_info = re.compile(r"\b(INFO)\b")
+
+    def highlightBlock(self, text: str):
+        if self.mode == "python":
+            self._highlight_python(text)
+        elif self.mode == "json":
+            self._highlight_json(text)
+        elif self.mode == "yaml":
+            self._highlight_yaml(text)
+        elif self.mode == "log":
+            self._highlight_log(text)
+
+    # ---- Python----
+    def _highlight_python(self, text: str):
+        m = self._py_comment.search(text)
+        comment_start = m.start() if m else None
+        if m:
+            self.setFormat(m.start(), len(text) - m.start(), self.f_comment)
+        for pat in (self._py_sq, self._py_dq):
+            for mm in pat.finditer(text):
+                if comment_start is not None and mm.start() >= comment_start:
+                    continue
+                self.setFormat(mm.start(), mm.end() - mm.start(), self.f_string)
+        limit = comment_start if comment_start is not None else len(text)
+        for mm in self._re_num.finditer(text[:limit]):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_number)
+        for kw in self._py_kw:
+            for mm in kw.finditer(text[:limit]):
+                self.setFormat(mm.start(), mm.end() - mm.start(), self.f_kw)
+        self.setCurrentBlockState(0)
+        self._apply_triple_quotes(text, "'''", self.PY_TRIPLE_SINGLE)
+        self._apply_triple_quotes(text, '"""', self.PY_TRIPLE_DOUBLE)
+
+    def _apply_triple_quotes(self, text: str, token: str, state_id: int):
+        in_state = (self.previousBlockState() == state_id)
+        start = 0
+
+        if in_state:
+            end = text.find(token, 0)
+            if end == -1:
+                self.setFormat(0, len(text), self.f_string)
+                self.setCurrentBlockState(state_id)
+                return
+            else:
+                end += len(token)
+                self.setFormat(0, end, self.f_string)
+                start = end
+        while True:
+            i = text.find(token, start)
+            if i == -1:
+                break
+            j = text.find(token, i + len(token))
+            if j == -1:
+                self.setFormat(i, len(text) - i, self.f_string)
+                self.setCurrentBlockState(state_id)
+                return
+            else:
+                j += len(token)
+                self.setFormat(i, j - i, self.f_string)
+                start = j
+
+    # ---- JSON / YAML ----
+    def _highlight_json(self, text: str):
+        for mm in self._re_comment.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_comment)
+        # keys: "key":
+        for mm in self._re_json_key.finditer(text):
+            q1 = text.rfind('"', 0, mm.end())
+            q0 = text.rfind('"', 0, q1)
+            if q0 != -1 and q1 != -1 and q1 > q0:
+                self.setFormat(q0, q1 - q0 + 1, self.f_key)
+        # strings
+        for mm in self._re_str.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_string)
+        # numbers
+        for mm in self._re_num.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_number)
+        # booleans / null
+        for mm in self._re_bool.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_bool)
+
+    def _highlight_yaml(self, text: str):
+        # comments
+        for mm in self._re_comment.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_comment)
+        # keys (simple): key:
+        for mm in self._re_yaml_key.finditer(text):
+            self.setFormat(mm.start(1), mm.end(1) - mm.start(1), self.f_key)
+        # strings
+        for mm in self._re_str.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_string)
+        # numbers
+        for mm in self._re_num.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_number)
+        # booleans
+        for mm in self._re_bool.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_bool)
+
+    # ---- Logs ----
+    def _highlight_log(self, text: str):
+        for mm in self._re_err.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_err)
+        for mm in self._re_warn.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_warn)
+        for mm in self._re_info.finditer(text):
+            self.setFormat(mm.start(), mm.end() - mm.start(), self.f_info)
+
+
+class LineNumberArea(QWidget):
+    def __init__(self, editor):
+        super().__init__(editor)
+        self._editor = editor
+        self.setMouseTracking(True)
+
+    def sizeHint(self):
+        return QSize(self._editor.line_number_area_width(), 0)
+
+    def paintEvent(self, event):
+        self._editor.line_number_area_paint_event(event)
+
+
+class CodeEditor(QPlainTextEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # monospace font
+        f = QFont("DejaVu Sans Mono")
+        f.setPointSize(max(9, QApplication.font().pointSize()))
+        self.setFont(f)
+        # line number area
+        self._ln_area = LineNumberArea(self)
+        self.blockCountChanged.connect(self.update_line_number_area_width)
+        self.updateRequest.connect(self.update_line_number_area)
+        self.cursorPositionChanged.connect(self._on_cursor_moved)
+        self.update_line_number_area_width(0)
+        # nice defaults
+        self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setWordWrapMode(QTextOption.NoWrap)
+        self.setTabStopDistance(
+            4 * QFontMetrics(self.font()).averageCharWidth())
+
+    def line_number_area_width(self):
+        digits = max(3, len(str(max(1, self.blockCount()))))
+        space = 8 + self.fontMetrics().horizontalAdvance('9') * digits
+        return space
+
+    def update_line_number_area_width(self, _):
+        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+
+    def update_line_number_area(self, rect, dy):
+        if dy:
+            self._ln_area.scroll(0, dy)
+        else:
+            self._ln_area.update(0, rect.y(), self._ln_area.width(),
+                                 rect.height())
+
+        if rect.contains(self.viewport().rect()):
+            self.update_line_number_area_width(0)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        cr = self.contentsRect()
+        self._ln_area.setGeometry(QRect(cr.left(), cr.top(),
+                                        self.line_number_area_width(),
+                                        cr.height()))
+
+    def line_number_area_paint_event(self, event):
+        painter = QPainter(self._ln_area)
+        painter.fillRect(event.rect(),
+                         self.palette().color(self.backgroundRole()))
+
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = int(self.blockBoundingGeometry(block).translated(
+            self.contentOffset()).top())
+        bottom = top + int(self.blockBoundingRect(block).height())
+
+        fm = self.fontMetrics()
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible() and bottom >= event.rect().top():
+                number = str(block_number + 1)
+                painter.setPen(self.palette().color(self.foregroundRole()))
+                painter.drawText(0, top, self._ln_area.width() - 4,
+                                 fm.height(), Qt.AlignRight, number)
+            block = block.next()
+            top = bottom
+            bottom = top + int(self.blockBoundingRect(block).height())
+            block_number += 1
+
+    def _on_cursor_moved(self):
+        if hasattr(self.parent(), "on_editor_cursor_moved"):
+            self.parent().on_editor_cursor_moved()
+
+
+class TextViewerWindow(BaseWindow):
+    def __init__(self, parent=None, title="", file_path=None, content=None,
+                 ratio=util.TEXT_WIN_RATIO):
+        super().__init__(parent, title or "Text Viewer", ratio=ratio)
+        self.file_path = file_path
+
+        m_val = 4
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(m_val, m_val, m_val, m_val)
+        layout.setSpacing(4)
+        # toolbar: find + wrap toggle + open
+        tb = QWidget()
+        tb_l = QHBoxLayout(tb)
+        tb_l.setContentsMargins(m_val, m_val, m_val, m_val)
+        tb_l.setSpacing(4)
+
+        self.find_edit = QLineEdit()
+        self.find_edit.setPlaceholderText("Find...")
+        self.btn_find_next = QPushButton("Find ▶")
+        self.btn_find_prev = QPushButton("◀ Prev")
+        self.wrap_cb = QCheckBox("Wrap")
+        self.btn_open = QPushButton("Open...")
+
+        tb_l.addWidget(self.find_edit, 1)
+        tb_l.addWidget(self.btn_find_prev)
+        tb_l.addWidget(self.btn_find_next)
+        tb_l.addWidget(self.wrap_cb)
+        tb_l.addWidget(self.btn_open, 0)
+        layout.addWidget(tb, 0)
+
+        # editor
+        self.editor = CodeEditor(self)
+        self.editor.setReadOnly(True)
+        layout.addWidget(self.editor, 1)
+
+        # status row
+        status = QWidget()
+        s_l = QHBoxLayout(status)
+        s_l.setContentsMargins(0, 0, 0, 0)
+        s_l.setSpacing(4)
+        self.lbl_msg = QLabel(file_path or "")
+        self.lbl_pos = QLabel("Ln 1, Col 1")
+        self.lbl_size = QLabel("0 KB")
+        s_l.addWidget(self.lbl_msg, 1)
+        s_l.addWidget(self.lbl_pos, 0)
+        s_l.addWidget(self.lbl_size, 0)
+        layout.addWidget(status, 0)
+
+        # connect
+        self.btn_find_next.clicked.connect(lambda: self._find(step=1))
+        self.btn_find_prev.clicked.connect(lambda: self._find(step=-1))
+        self.find_edit.returnPressed.connect(lambda: self._find(step=1))
+        self.wrap_cb.toggled.connect(self._set_wrap)
+        self.btn_open.clicked.connect(self._open_file)
+        self.editor.cursorPositionChanged.connect(self._update_cursor_pos)
+
+        if content is not None:
+            self.editor.setPlainText(content)
+            self.lbl_msg.setText(file_path or "")
+            self.editor.moveCursor(QTextCursor.Start)
+            self.highlighter = MiniHighlighter(self.editor.document(), "json")
+            self._update_cursor_pos()
+        elif file_path:
+            self.load_file(file_path)
+
+    def _update_cursor_pos(self):
+        cur = self.editor.textCursor()
+        line = cur.blockNumber() + 1
+        col = cur.columnNumber() + 1
+        self.lbl_pos.setText(f"Ln {line}, Col {col}")
+
+    def on_editor_cursor_moved(self):
+        # called from CodeEditor for the status
+        self._update_cursor_pos()
+
+    def _set_wrap(self, enabled: bool):
+        if enabled:
+            self.editor.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        else:
+            self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
+
+    def _find(self, step=1):
+        txt = self.find_edit.text()
+        if not txt:
+            return
+        flags = QTextDocument.FindFlags()
+        if step < 0:
+            flags |= QTextDocument.FindBackward
+        cursor = self.editor.textCursor()
+        if step > 0:
+            start = cursor.selectionEnd()
+        else:
+            start = cursor.selectionStart()
+        found = self.editor.find(txt, flags)
+        if not found:
+            if step > 0:
+                self.editor.moveCursor(QTextCursor.Start)
+            else:
+                self.editor.moveCursor(QTextCursor.End)
+            self.editor.find(txt, flags)
+        self._update_cursor_pos()
+
+    def _open_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open file",
+                                              self.file_path or os.getcwd())
+        if path:
+            self.load_file(path)
+
+    def load_file(self, path):
+        try:
+            f = QFile(path)
+            if not f.open(QIODevice.ReadOnly | QIODevice.Text):
+                raise RuntimeError("Can't open file")
+            size = f.size()
+            kb = max(1, int(size // 1024))
+            self.lbl_size.setText(f"{kb} KB")
+            self.lbl_msg.setText(path)
+            if size < util.TEXT_LOAD_WHOLE_MAX_BYTES:
+                txt = bytes(f.readAll()).decode('utf-8', errors='replace')
+                self.editor.setPlainText(txt)
+            else:
+                self.editor.setPlainText("")
+                stream = QTextStream(f)
+                stream.setCodec('UTF-8')
+                self.editor.setUpdatesEnabled(False)
+                chunk = []
+                while not stream.atEnd():
+                    chunk.append(stream.read(util.TEXT_STREAM_CHUNK))
+                self.editor.setPlainText("".join(chunk))
+                self.editor.setUpdatesEnabled(True)
+
+            ext = os.path.splitext(path)[1].lower()
+            mode = None
+            if ext == ".py":
+                mode = "python"
+            elif ext == ".json":
+                mode = "json"
+            elif ext in (".yml", ".yaml"):
+                mode = "yaml"
+            elif ext in (".log", ".out", ".err"):
+                mode = "log"
+
+            self.highlighter = MiniHighlighter(self.editor.document(),
+                                               mode) if mode else None
+            f.close()
+            self.editor.moveCursor(QTextCursor.Start)
+            self._update_cursor_pos()
+        except Exception as e:
+            QMessageBox.critical(self, "Open failed", str(e))
+
+
+class NumpyTableModel(QAbstractTableModel):
+    def __init__(self, data: np.ndarray, parent=None):
+        super().__init__(parent)
+        self._data = np.asarray(data)
+        if self._data.ndim == 1:
+            self._data = self._data.reshape(-1, 1)
+
+    def rowCount(self, parent=QModelIndex()):
+        return int(self._data.shape[0])
+
+    def columnCount(self, parent=QModelIndex()):
+        return int(self._data.shape[1])
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        if role == Qt.DisplayRole:
+            v = self._data[index.row(), index.column()]
+            if isinstance(v, (float, np.floating)):
+                return f"{float(v):.6g}"
+            return str(v)
+        if role == Qt.TextAlignmentRole:
+            return Qt.AlignRight | Qt.AlignVCenter
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role != Qt.DisplayRole:
+            return None
+        if orientation == Qt.Horizontal:
+            return f"Col {section}"
+        return f"Row {section}"
+
+
+class TableViewerWindow(BaseWindow):
+    """Table viewer for 1D/2D arrays"""
+    def __init__(self, parent=None, title="", data=None,
+                 ratio=util.TEXT_WIN_RATIO):
+        super().__init__(parent, title, ratio)
+        m_val = 4
+        line_hei = 30
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(m_val, m_val, m_val, m_val)
+        layout.setSpacing(4)
+
+        # Toolbar row
+        bar = QWidget()
+        bar.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+
+        self.edt_find = QLineEdit()
+        self.edt_find.setPlaceholderText("Find…")
+        self.edt_find.setFixedHeight(line_hei)
+
+        self.btn_copy = QPushButton("Copy selection")
+        self.btn_copy.setFixedHeight(line_hei)
+
+        self.btn_save = QPushButton("Save CSV")
+        self.btn_save.setFixedHeight(line_hei)
+
+        self.lbl_info = QLabel("")
+        self.lbl_info.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        row.addWidget(self.edt_find, 1)
+        row.addWidget(self.btn_copy, 0)
+        row.addWidget(self.btn_save, 0)
+        row.addWidget(self.lbl_info, 0)
+
+        layout.addWidget(bar, 0)
+
+        # Table view (virtualized)
+        self.view = QTableView()
+        self.view.setAlternatingRowColors(True)
+        self.view.setSelectionBehavior(QAbstractItemView.SelectItems)
+        self.view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.view.setSortingEnabled(True)
+        self.view.setWordWrap(False)
+        self.view.setCornerButtonEnabled(False)
+        self.view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        # Headers
+        hh = self.view.horizontalHeader()
+        hh.setStretchLastSection(False)
+        hh.setSectionResizeMode(QHeaderView.Interactive)
+        hh.setDefaultAlignment(Qt.AlignCenter)
+
+        vh = self.view.verticalHeader()
+        vh.setSectionResizeMode(QHeaderView.Fixed)
+        vh.setDefaultSectionSize(22)
+
+        layout.addWidget(self.view, 1)
+
+        # Model + proxy (sorting)
+        arr = np.asarray(data)
+        self.model = NumpyTableModel(arr, self)
+        self.proxy = QSortFilterProxyModel(self)
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        self.view.setModel(self.proxy)
+
+        # Info + actions
+        r, c = self.model.rowCount(), self.model.columnCount()
+        self.lbl_info.setText(f"{r} × {c}")
+
+        self.edt_find.textChanged.connect(self._on_find_changed)
+        self.btn_copy.clicked.connect(self._copy_selection_to_clipboard)
+        self.btn_save.clicked.connect(self._save_csv)
+
+        # Make it readable without huge columns
+        self.view.resizeColumnsToContents()
+        self.view.resizeRowsToContents()
+
+    def _on_find_changed(self, txt: str):
+        self.proxy.setFilterFixedString(txt)
+
+    def _copy_selection_to_clipboard(self):
+        sel = self.view.selectionModel().selectedIndexes()
+        if not sel:
+            return
+        sel = sorted(sel, key=lambda i: (i.row(), i.column()))
+        rows = {}
+        for idx in sel:
+            rows.setdefault(idx.row(), {})[idx.column()] = idx.data()
+
+        # rectangular output with tabs/newlines (Excel-friendly)
+        min_r, max_r = min(rows.keys()), max(rows.keys())
+        min_c = min(min(cols.keys()) for cols in rows.values())
+        max_c = max(max(cols.keys()) for cols in rows.values())
+
+        lines = []
+        for r in range(min_r, max_r + 1):
+            cols = rows.get(r, {})
+            line = []
+            for c in range(min_c, max_c + 1):
+                line.append(str(cols.get(c, "")))
+            lines.append("\t".join(line))
+
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def _save_csv(self):
+        rows = self.proxy.rowCount()
+        cols = self.proxy.columnCount()
+        if rows <= 0 or cols <= 0:
+            QMessageBox.information(self, "Nothing to save", "Table is empty.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(self, "Save Table As", "",
+                                              "CSV (*.csv)")
+        if not path:
+            return
+        out = np.empty((rows, cols), dtype=object)
+        for r in range(rows):
+            for c in range(cols):
+                p_idx = self.proxy.index(r, c)
+                s_idx = self.proxy.mapToSource(p_idx)
+                try:
+                    out[r, c] = self.model._data[s_idx.row(), s_idx.column()]
+                except Exception:
+                    out[r, c] = p_idx.data()
+
+        err = util.save_table(path, out)
+        if err:
+            QMessageBox.critical(self, "Save failed", str(err))
+        else:
+            QMessageBox.information(self, "Saved", f"CSV saved to:\n{path}")
+
+
+class StatisticsWindow(BaseWindow):
+    """Display Image Statistics"""
+
+    def __init__(self, parent=None, title="", stats=None, help_text=""):
+        super().__init__(parent, title + " " + help_text, ratio=0.4)
+        self.resize(400, 300)
+        layout = QVBoxLayout(self)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+        if stats:
+            self.table.setRowCount(len(stats))
+            for i, (metric, value) in enumerate(stats.items()):
+                self.table.setItem(i, 0, QTableWidgetItem(metric))
+                self.table.setItem(i, 1, QTableWidgetItem(f"{value:.5f}"))
+
+        layout.addWidget(self.table)
+
+
+class Viewer2DWindow(BaseWindow):
+    """2D Image Viewer using pyqtgraph"""
+    def __init__(self, parent=None, title="", image=None, file_path="",
+                 ratio=util.PLT_WIN_2D_RATIO):
+        super().__init__(parent, title, ratio)
+        self.parent_app = parent
+        self.file_path = file_path
+        self.image = np.asarray(image)
+        self.is_color = False
+
+        # Preprocessing
+        if self.image.ndim == 3 and self.image.shape[2] in [3, 4]:
+            self.is_color = True
+            nmin, nmax = np.min(self.image), np.max(self.image)
+            if nmax > nmin:
+                self.image = (self.image - nmin) / (nmax - nmin)
+            self.image = np.clip(self.image, 0.0, 1.0)
+        if np.isnan(self.image).any():
+            self.image = np.nan_to_num(self.image)
+
+        # UI Setup
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                       util.UI_MARGIN_S, util.UI_MARGIN_S)
+        main_layout.setSpacing(util.UI_SPACING_M)
+        # Canvas Area
+        self.imv = pg.ImageView()
+        grid = self.imv.ui.gridLayout
+        grid.setHorizontalSpacing(util.UI_SPACING_M)
+        grid.setContentsMargins(util.UI_MARGIN_XS, util.UI_MARGIN_XS,
+                                util.UI_MARGIN_XS, util.UI_MARGIN_XS)
+        hist_w = self.imv.getHistogramWidget()
+        gui_font = QApplication.font()
+
+        hist_font = QFont(gui_font)
+        hist_font.setPointSize(max(8, gui_font.pointSize() - 3))
+
+        hist = self.imv.getHistogramWidget()
+        hist_axis = hist.axis
+
+        hist_axis.setTickFont(hist_font)
+        hist_axis.label.setFont(hist_font)
+        hist_w.setMinimumWidth(util.HIST_MIN_W)
+
+        self.imv.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.imv.ui.roiBtn.hide()
+        self.imv.ui.menuBtn.hide()
+        self.imv.view.setDefaultPadding(0)
+
+        # Set bright-grey background for Histogram handles (triangles)
+        self.imv.getHistogramWidget().setBackground(pg.mkColor(220, 220, 220))
+
+        self.imv.setImage(self.image)
+        self.imv.view.autoRange(padding=0)
+        main_layout.addWidget(self.imv, 0)
+
+        # --- Control Area: single row, tight layout ---
+        controls = QWidget()
+        controls.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout(controls)
+        row.setContentsMargins(util.UI_MARGIN_XS, util.UI_MARGIN_XS,
+                               util.UI_MARGIN_S, 0)
+        row.setSpacing(util.UI_SPACING_M)
+
+        self.btn_reset = QPushButton("Reset")
+        self.btn_reset.clicked.connect(self.reset)
+
+        self.btn_stats = QPushButton("Statistics")
+        self.btn_stats.clicked.connect(self.open_statistics)
+
+        self.btn_hist = QPushButton("Histogram")
+        self.btn_hist.clicked.connect(self.open_histogram)
+
+        self.btn_perc = QPushButton("Percentile")
+        self.btn_perc.clicked.connect(self.open_percentile)
+
+        self.lbl_aspect = QLabel("Aspect")
+        self.lbl_aspect.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        self.combo_aspect = QComboBox()
+        self.combo_aspect.addItems(["equal", "auto"])
+        self.combo_aspect.currentTextChanged.connect(self.update_aspect_ratio)
+
+        # uniform sizing
+        buttons = [self.btn_reset, self.btn_stats, self.btn_hist, self.btn_perc]
+        for b in buttons:
+            b.setFixedHeight(util.BTN_H)
+
+        max_w = max(b.sizeHint().width() for b in buttons)
+        for b in buttons:
+            b.setFixedWidth(max_w)
+
+        self.combo_aspect.setFixedHeight(util.BTN_H)
+
+        row.addWidget(self.btn_reset)
+        row.addWidget(self.btn_stats)
+        row.addWidget(self.btn_hist)
+        row.addWidget(self.btn_perc)
+        row.addSpacing(util.UI_MARGIN_L)
+        row.addWidget(self.lbl_aspect)
+        row.addWidget(self.combo_aspect)
+        row.addStretch(1)
+
+        controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        controls.setFixedHeight(controls.sizeHint().height())
+
+        main_layout.addWidget(controls, 0)
+
+        # --- Status bar row ---
+        status_row = QWidget()
+        status_layout = QHBoxLayout(status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(4)
+
+        self.msg_label = QLabel(self.file_path)
+        self.msg_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.lbl_cursor = QLabel("x=—  y=—  value=—")
+        self.lbl_cursor.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_cursor.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        status_layout.addWidget(self.msg_label, 1)
+        status_layout.addWidget(self.lbl_cursor, 0)
+
+        main_layout.addWidget(status_row, 0)
+        self.imv.view.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
+    def _on_mouse_moved(self, pos):
+        if self.image is None or self.image.ndim != 2:
+            return
+        vb = self.imv.view
+        mouse_point = vb.mapSceneToView(pos)
+        x = int(np.floor(mouse_point.x()))
+        y = int(np.floor(mouse_point.y()))
+        h, w = self.image.shape
+        if 0 <= x < w and 0 <= y < h:
+            v = self.image[y, x]
+            if isinstance(v, (float, np.floating)):
+                vtxt = f"{float(v):.6g}"
+            else:
+                vtxt = str(v)
+            self.lbl_cursor.setText(f"x={x}  y={y}  value={vtxt}")
+        else:
+            self.lbl_cursor.setText("x=—  y=—  value=—")
+
+    def update_aspect_ratio(self, text):
+        if text == "equal":
+            self.imv.view.setAspectLocked(True)
+        else:
+            self.imv.view.setAspectLocked(False)
+
+    def reset(self):
+        if self.image is not None:
+            vmin, vmax = np.nanmin(self.image), np.nanmax(self.image)
+            if vmin == vmax:
+                vmin, vmax = vmin - 0.5, vmax + 0.5
+            hist_item = self.imv.getHistogramWidget().item
+            hist_item.region.setRegion([vmin, vmax])
+            hist_item.gradient.loadPreset('grey')
+            self.imv.setLevels(vmin, vmax)
+            hist_item.autoHistogramRange()
+            self.imv.view.autoRange(padding=0)
+
+            if hasattr(self, "combo_aspect"):
+                try:
+                    self.combo_aspect.blockSignals(True)
+                    self.combo_aspect.setCurrentText("equal")
+                finally:
+                    self.combo_aspect.blockSignals(False)
+            try:
+                self.update_aspect_ratio("equal")
+            except Exception:
+                pass
+
+    def open_statistics(self):
+        stats = util.get_image_statistics(self.image)
+        win = StatisticsWindow(self,
+                               title=f"Stats: "
+                                     f"{os.path.basename(self.file_path)}",
+                               stats=stats)
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        win.show()
+
+    def open_histogram(self):
+        win = PlotWindow1D(self,
+                           title=f"Histogram: "
+                                 f"{os.path.basename(self.file_path)}",
+                           data_y=self.image, plot_type="histogram")
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        win.show()
+
+    def open_percentile(self):
+        try:
+            percentiles, density = util.get_percentile_density(self.image)
+            win = PlotWindow1D(self,
+                               title=f"Percentile: "
+                                     f"{os.path.basename(self.file_path)}",
+                               data_x=percentiles, data_y=density,
+                               plot_type="percentile")
+            win.setAttribute(Qt.WA_DeleteOnClose)
+            win.show()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def focusInEvent(self, event):
+        if self.parent_app and hasattr(self.parent_app, 'set_active_viewer'):
+            self.parent_app.set_active_viewer(self)
+        super().focusInEvent(event)
+
+    def closeEvent(self, event):
+        try:
+            self.imv.view.scene().sigMouseMoved.disconnect(self._on_mouse_moved)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            if hasattr(self, "imv") and self.imv is not None:
+                try:
+                    self.imv.clear()
+                except Exception:
+                    pass
+                try:
+                    self.imv.setParent(None)
+                except Exception:
+                    pass
+                try:
+                    self.imv.deleteLater()
+                except Exception:
+                    pass
+                self.imv = None
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+
+class InteractiveViewerWindow(BaseWindow):
+    """3D Stack Viewer using pyqtgraph"""
+
+    def __init__(self, parent_app, file_path, file_type, hdf_key=None,
+                 list_files=None):
+        ratio = util.PLT_WIN_3D_RATIO
+        title = f"Viewing: {os.path.basename(file_path)}"
+        super().__init__(parent_app, title, ratio)
+
+        self.parent_app = parent_app
+        self.file_path = file_path
+        self.file_type = file_type
         self.hdf_key = hdf_key
         self.list_files = list_files
         self.hdf_file_obj = None
-        self.closing = False
+
+        # Initialization logic from original
         if file_type == "tif":
             self.depth = len(list_files)
-            if self.depth == 0:
-                raise ValueError("No TIF files found.")
             initial_image = util.load_image(list_files[0], average=True)
             self.height, self.width = initial_image.shape[:2]
         elif file_type == "cine":
@@ -795,725 +1203,1055 @@ class InteractiveViewer:
             self.depth = metadata["TotalImageCount"]
             initial_image = util.extract_frame_cine(file_path, 0)
         elif file_type == "hdf":
-            try:
-                self.data_obj, self.hdf_file_obj = util.load_hdf(
-                    file_path, hdf_key, return_file_obj=True)
-            except Exception:
-                raise ValueError(
-                    f"Failed to load HDF dataset at key: {hdf_key}")
-            if self.data_obj.ndim != 3:
-                raise ValueError(f"HDF data must be 3D for interactive "
-                                 f"viewer, found {self.data_obj.ndim}D.")
+            self.data_obj, self.hdf_file_obj = util.load_hdf(
+                file_path, hdf_key, return_file_obj=True)
             self.depth, self.height, self.width = self.data_obj.shape
             initial_image = self.data_obj[0, :, :]
-        else:
-            raise ValueError(
-                f"Unsupported file type for viewer: {file_type}")
-        # Viewer State
+
         self.viewer_state = {
-            "image": initial_image,  # The currently displayed 2D slice
-            "table": None,  # The current 1D line profile data
-            "index": 0,  # Current slice index
-            "axis": 0,  # Current slicing axis (0=Z, 1=Y, 2=X)
-            "path": self.file_path,
-            "hdf_key": self.hdf_key,
+            "image": initial_image,
+            "table": None,
+            "index": 0,
+            "axis": 0,
             "img_width": self.width,
             "img_height": self.height,
             "img_depth": self.depth,
             "last_profile_point": None,
             "last_profile_orientation": None
         }
-        # Matplotlib line references (for updates/cleanup)
-        self.plot_hline = None
-        self.plot_vline = None
-        self.update_job = None
+
+        # Debounce timer
+        self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
+        self.update_timer.setInterval(util.DEBOUNCE_TIMER_MS)
+        self.update_timer.timeout.connect(self.perform_update)
+
         self._setup_ui()
-        self._setup_bindings()
-        self.set_active()
 
     def _setup_ui(self):
-        # Determine DPI and Font for plotting
-        try:
-            dpi = self.main_win.winfo_fpixels("1i") + 30
-        except:
-            dpi = 96
-        try:
-            default_font = tkFont.nametofont("TkDefaultFont")
-            font_family = default_font.cget("family")
-            plt.rcParams.update(
-                {'font.family': font_family, 'font.size': FONT_SIZE})
-        except:
-            pass
-        settings = self.main_app.define_window_geometry(PLT_WIN_3D_RATIO)
-        win_width, win_height, x_offset, y_offset = settings
-        self.main_win.geometry(f"{win_width}x{win_height}+"
-                               f"{x_offset}+{y_offset}")
-        # UI variables
-        self.message_text_var = tk.StringVar(master=self.main_win,
-                                             value=self.file_path)
-        self.axis_var = tk.StringVar(master=self.main_win, value="axis 0")
-        self.slice0_var = tk.IntVar(master=self.main_win, value=0)
-        self.slice1_var = tk.IntVar(master=self.main_win, value=0)
-        self.min_contrast_var = tk.DoubleVar(master=self.main_win,
-                                             value=0.0)
-        self.max_contrast_var = tk.DoubleVar(master=self.main_win,
-                                             value=1.0)
-        self.slice0_label_var = tk.StringVar(master=self.main_win,
-                                             value="0")
-        self.slice1_label_var = tk.StringVar(master=self.main_win,
-                                             value="0")
-        self.min_contrast_label_var = tk.StringVar(master=self.main_win,
-                                                   value="0.0")
-        self.max_contrast_label_var = tk.StringVar(master=self.main_win,
-                                                   value="100.0")
-        self.aspect_var = tk.StringVar(master=self.main_win, value="equal")
-        # Configure window's grid
-        self.main_win.rowconfigure(0, weight=1)
-        self.main_win.rowconfigure(1, weight=0)
-        self.main_win.rowconfigure(2, weight=0)
-        self.main_win.columnconfigure(0, weight=1)
-        # Create the frames
-        canvas_frame = ttk.Frame(self.main_win)
-        canvas_frame.grid(row=0, column=0, sticky="nsew")
-        control_frame = ttk.Frame(self.main_win)
-        control_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
-        status_frame = ttk.Frame(self.main_win, relief=tk.SUNKEN,
-                                 borderwidth=1)
-        status_frame.grid(row=2, column=0, sticky="ew")
-        status_frame.rowconfigure(0, weight=1)
-        status_frame.columnconfigure(0, weight=1)
-        message_label = ttk.Label(status_frame,
-                                  textvariable=self.message_text_var,
-                                  wraplength=win_width - 100, anchor=tk.W)
-        message_label.grid(row=0, column=0, sticky="ew", padx=5, pady=2)
-        # Setup Matplotlib Figures
-        canvas_frame.rowconfigure(0, weight=1)
-        canvas_frame.columnconfigure(0, weight=3)
-        canvas_frame.columnconfigure(1, weight=2)
-        canvas_frame.rowconfigure(1, weight=0)
-        image_frame = ttk.Frame(canvas_frame)
-        image_frame.grid(row=0, column=0, sticky="nsew")
-        plot_frame = ttk.Frame(canvas_frame)
-        plot_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 0))
-        toolbar_frame = ttk.Frame(canvas_frame)
-        toolbar_frame.grid(row=1, column=0, sticky="ew", columnspan=2)
-        # Figure 1: Image
-        self.fig_img = matplotlib.figure.Figure(constrained_layout=True,
-                                                dpi=dpi)
-        self.ax_img = self.fig_img.add_subplot(111)
-        self.ax_img.set_title(f"Axis: 0. Index: 0. H x W: "
-                              f"{self.height} x {self.width}")
-        self.ax_img.set_xlabel("X")
-        self.ax_img.set_ylabel("Y")
-        self.ax_img.set_aspect("equal")
-        vmin_init = np.percentile(self.viewer_state["image"], 0)
-        vmax_init = np.percentile(self.viewer_state["image"], 100)
-        self.slice0 = self.ax_img.imshow(self.viewer_state["image"],
-                                         cmap="gray", vmin=vmin_init,
-                                         vmax=vmax_init)
-        self.slice0.set_extent([0, self.width, self.height, 0])
-        # Figure 2: Intensity-plot
-        self.fig_plot = matplotlib.figure.Figure(constrained_layout=False,
-                                                 dpi=dpi)
-        self.ax_plot = self.fig_plot.add_subplot(111)
-        self.ax_plot.set_title("Line Profile")
-        self.ax_plot.set_box_aspect(
-            np.clip(0.95 * self.width / self.height, 0.8, 1.0))
-        image_frame.rowconfigure(0, weight=1)
-        image_frame.columnconfigure(0, weight=1)
-        self.main_win.update_idletasks()
-        self.canvas_img = FigureCanvasTkAgg(self.fig_img,
-                                            master=image_frame)
-        self.canvas_img.draw()
-        self.canvas_img.get_tk_widget().grid(row=0, column=0,
-                                             sticky="nsew")
-        plot_frame.rowconfigure(0, weight=1)
-        plot_frame.columnconfigure(0, weight=1)
-        self.canvas_plot = FigureCanvasTkAgg(self.fig_plot,
-                                             master=plot_frame)
-        self.canvas_plot.draw()
-        self.canvas_plot.get_tk_widget().grid(row=0, column=0,
-                                              sticky="nsew")
-        toolbar_frame.columnconfigure(0, weight=1)
-        toolbar = DatviewToolbar(self.canvas_img, toolbar_frame)
-        toolbar.update()
-        toolbar.grid(row=0, column=0, sticky="ew")
-        # Control Frame Widgets
-        control_frame.columnconfigure(0, weight=0)
-        control_frame.columnconfigure(1, weight=3)
-        control_frame.columnconfigure(2, weight=0)
-        control_frame.columnconfigure(3, weight=0)
-        control_frame.columnconfigure(4, weight=2)
-        control_frame.columnconfigure(5, weight=0)
-        control_frame.columnconfigure(6, weight=0)
-        control_frame.columnconfigure(7, weight=0)
-        control_frame.columnconfigure(8, weight=0)
-        control_frame.rowconfigure(0, weight=0)
-        control_frame.rowconfigure(1, weight=0)
-        # Slice Control 1 (Axis 0)
-        if self.file_type == "hdf" and self.depth > 1:
-            axis0_radio = ttk.Radiobutton(control_frame, text="Axis 0",
-                                          variable=self.axis_var,
-                                          value="axis 0",
-                                          command=self.on_axis_select)
-            axis0_radio.grid(row=0, column=0, sticky='w', padx=(10, 5),
-                             pady=2)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                       util.UI_MARGIN_S, util.UI_MARGIN_S)
+        main_layout.setSpacing(0)
+
+        # Canvas Area (Image + Plot)
+        canvas_widget = QWidget()
+        canvas_layout = QHBoxLayout(canvas_widget)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(util.UI_SPACING_S)
+
+        self.imv = pg.ImageView()
+        self.imv.view.setMenuEnabled(False)
+        self.imv.ui.roiBtn.hide()
+        self.imv.ui.menuBtn.hide()
+
+        self.imv.ui.gridLayout.setContentsMargins(util.UI_MARGIN_XS,
+                                                  util.UI_MARGIN_XS,
+                                                  util.UI_MARGIN_XS,
+                                                  util.UI_MARGIN_XS)
+        self.imv.ui.gridLayout.setSpacing(util.UI_SPACING_M)
+        self.imv.view.setDefaultPadding(0)
+
+        # --- Darker histogram/LUT background so white triangles are visible ---
+        hist_w = self.imv.getHistogramWidget()
+        hist_w.setMinimumWidth(util.HIST_MIN_W)
+        hist_w.setMaximumWidth(util.HIST_MAX_W)
+        hist_w.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        hist_w.setBackground(pg.mkColor(215, 215, 215))
+
+        # Profile plot
+        self.plot_widget = pg.PlotWidget(title="Line Profile")
+        self.plot_widget.getViewBox().setDefaultPadding(0)
+        self.plot_curve = self.plot_widget.plot(pen='b')
+
+        # --- Make plot fonts match GUI font ---
+        gui_font = QApplication.font()
+        plot_font = QFont(gui_font)
+        plot_font.setPointSize(max(8, gui_font.pointSize() - 3))
+        for axis_name in ("bottom", "left"):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setTickFont(plot_font)
+            axis.label.setFont(plot_font)
+        self.plot_widget.getPlotItem().titleLabel.setFont(plot_font)
+
+        hist = self.imv.getHistogramWidget()
+        hist_axis = hist.axis
+        hist_axis.setTickFont(plot_font)
+        hist_axis.label.setFont(plot_font)
+
+        canvas_layout.addWidget(self.imv, 3)
+        canvas_layout.addWidget(self.plot_widget, 2)
+        main_layout.addWidget(canvas_widget, 1)
+
+        # Interactions
+        self.imv.view.scene().sigMouseClicked.connect(self.on_image_click)
+        self.imv.view.sigRangeChanged.connect(self.on_view_range_changed)
+
+        # Profile Lines
+        self.v_line = pg.InfiniteLine(angle=90, movable=False, pen='r')
+        self.h_line = pg.InfiniteLine(angle=0, movable=False, pen='r')
+        self.imv.addItem(self.v_line, ignoreBounds=True)
+        self.imv.addItem(self.h_line, ignoreBounds=True)
+        self.v_line.hide()
+        self.h_line.hide()
+
+        # Controls
+        controls = QWidget()
+        c_layout = QGridLayout(controls)
+        c_layout.setHorizontalSpacing(util.UI_SPACING_M)
+        c_layout.setVerticalSpacing(util.UI_SPACING_M)
+        c_layout.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                    util.UI_MARGIN_S, 0)
+
+        # Row 0
+        if self.file_type == "hdf" or self.depth > 1:
+            self.radio_axis0 = QRadioButton("Axis 0")
+            self.radio_axis0.setChecked(True)
+            self.radio_axis0.toggled.connect(
+                lambda checked: self.on_axis_select(0) if checked else None)
+            c_layout.addWidget(self.radio_axis0, 0, 0,
+                               alignment=Qt.AlignVCenter)
+            self.slider0 = QSlider(Qt.Horizontal)
+            self.slider0.setRange(0, self.depth - 1)
+            self.slider0.valueChanged.connect(self.on_slice_change_request)
+            self.slider0.setFixedHeight(20)
+            c_layout.addWidget(self.slider0, 0, 1, alignment=Qt.AlignVCenter)
+
+            self.lbl_slice0 = QLabel("0")
+            self.lbl_slice0.setFixedWidth(40)
+            c_layout.addWidget(self.lbl_slice0, 0, 2, alignment=Qt.AlignVCenter)
         else:
-            ttk.Label(control_frame, text="Slice:").grid(row=0, column=0,
-                                                         sticky='e',
-                                                         padx=(10, 5),
-                                                         pady=2)
-        self.slider0 = ttk.Scale(control_frame, from_=0,
-                                 to=self.depth - 1, orient=tk.HORIZONTAL,
-                                 variable=self.slice0_var,
-                                 command=self.on_slice_change)
-        self.slider0.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
-        ttk.Label(control_frame,
-                  textvariable=self.slice0_label_var,
-                  width=4).grid(row=0, column=2, sticky='w', padx=(0, 10))
-        # Slice Control 2 (Axis 1, HDF only)
-        if self.file_type == "hdf" and self.height > 1:
-            axis1_radio = ttk.Radiobutton(control_frame, text="Axis 1",
-                                          variable=self.axis_var,
-                                          value="axis 1",
-                                          command=self.on_axis_select)
-            axis1_radio.grid(row=1, column=0, sticky='w', padx=(10, 5),
-                             pady=2)
-            self.slider1 = ttk.Scale(control_frame, from_=0,
-                                     to=self.height - 1,
-                                     orient=tk.HORIZONTAL,
-                                     variable=self.slice1_var,
-                                     command=self.on_slice_change,
-                                     state=tk.DISABLED)
-            self.slider1.grid(row=1, column=1, sticky='ew', padx=5, pady=2)
-            ttk.Label(control_frame, textvariable=self.slice1_label_var,
-                      width=4).grid(row=1, column=2, sticky='w',
-                                    padx=(0, 10))
-        # Contrast Controls
-        ttk.Label(control_frame,
-                  text="Min %:").grid(row=0, column=3, sticky='w',
-                                      padx=(10, 5), pady=2)
-        min_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
-                               orient=tk.HORIZONTAL,
-                               variable=self.min_contrast_var,
-                               command=self.on_contrast_change)
-        min_slider.grid(row=0, column=4, sticky='ew', padx=5, pady=2)
-        ttk.Label(control_frame, textvariable=self.min_contrast_label_var,
-                  width=5).grid(row=0, column=5, sticky='w', padx=(0, 10))
-        ttk.Label(control_frame,
-                  text="Max %:").grid(row=1, column=3, sticky='w',
-                                      padx=(10, 5), pady=2)
-        max_slider = ttk.Scale(control_frame, from_=0.0, to=1.0,
-                               orient=tk.HORIZONTAL,
-                               variable=self.max_contrast_var,
-                               command=self.on_contrast_change)
-        max_slider.grid(row=1, column=4, sticky='ew', padx=5, pady=2)
-        ttk.Label(control_frame, textvariable=self.max_contrast_label_var,
-                  width=5).grid(row=1, column=5, sticky='w', padx=(0, 10))
-        # Buttons
-        style = ttk.Style()
-        style.theme_use(TTK_THEME)
-        style.configure("Short.TButton", padding=[5, 1, 5, 1])
+            c_layout.addWidget(QWidget(), 0, 0, 1, 3)
 
-        reset_button = ttk.Button(control_frame, text="Reset",
-                                  command=self.reset_contrast,
-                                  style="Short.TButton")
-        reset_button.grid(row=0, column=6, sticky='ew', padx=5,
-                          pady=(5, 0))
+        self.btn_reset = QPushButton("Reset")
+        self.btn_reset.clicked.connect(self.reset)
+        c_layout.addWidget(self.btn_reset, 0, 3, alignment=Qt.AlignVCenter)
 
-        statistics_button = ttk.Button(control_frame, text="Statistics",
-                                       command=self.open_statistics,
-                                       style="Short.TButton")
-        statistics_button.grid(row=0, column=7, sticky='ew', padx=(0, 5),
-                               pady=(5, 0))
+        self.btn_stats = QPushButton("Statistics")
+        self.btn_stats.clicked.connect(self.open_statistics)
+        c_layout.addWidget(self.btn_stats, 0, 4, alignment=Qt.AlignVCenter)
 
-        histogram_button = ttk.Button(control_frame, text="Histogram",
-                                      command=self.open_histogram,
-                                      style="Short.TButton")
-        histogram_button.grid(row=1, column=6, sticky='ew', padx=5, pady=5)
+        self.btn_save_img = QPushButton("Save Image")
+        self.btn_save_img.clicked.connect(self.save_current_image)
+        c_layout.addWidget(self.btn_save_img, 0, 5, alignment=Qt.AlignVCenter)
 
-        percentile_button = ttk.Button(control_frame, text="Percentile",
-                                       command=self.open_percentile,
-                                       style="Short.TButton")
-        percentile_button.grid(row=1, column=7, sticky='ew', padx=(0, 5),
-                               pady=5)
-        # Aspect Ratio Control
-        ttk.Label(control_frame, text="Aspect").grid(row=0, column=8,
-                                                     sticky='w',
-                                                     padx=(0, 5),
-                                                     pady=5)
-        aspect_combo = ttk.Combobox(control_frame,
-                                    textvariable=self.aspect_var,
-                                    values=["equal", "auto"], width=5)
-        aspect_combo.grid(row=1, column=8, sticky='ewns', padx=(0, 5),
-                          pady=5)
-        aspect_combo.bind("<<ComboboxSelected>>", self.update_aspect_ratio)
-        aspect_combo.bind("<Return>", self.update_aspect_ratio)
+        self.lbl_aspect = QLabel("Aspect")
+        self.lbl_aspect.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        c_layout.addWidget(self.lbl_aspect, 0, 6)
 
-    def _setup_bindings(self):
-        # Bindings for active view, closing, and interactions
-        self.main_win.bind("<FocusIn>", self.set_active)
-        self.main_win.bind("<Button-1>", self.set_active)
-        self.main_win.protocol("WM_DELETE_WINDOW", self.on_close)
+        # Row 1
+        if self.file_type == "hdf" and self.height > 1 and self.depth > 1:
+            self.radio_axis1 = QRadioButton("Axis 1")
+            self.radio_axis1.toggled.connect(
+                lambda checked: self.on_axis_select(1) if checked else None)
+            c_layout.addWidget(self.radio_axis1, 1, 0,
+                               alignment=Qt.AlignVCenter)
 
-        self.id_scroll = self.canvas_img.mpl_connect("scroll_event",
-                                                     self.on_scroll)
-        self.id_press = self.canvas_img.mpl_connect(
-            "button_press_event", self.plot_intensity_along_clicked_point)
-        # Connect to Matplotlib's built-in axis change callback
-        self.id_xlim = self.ax_img.callbacks.connect('xlim_changed',
-                                                     self.on_zoom_pan)
-        self.id_ylim = self.ax_img.callbacks.connect('ylim_changed',
-                                                     self.on_zoom_pan)
+            self.slider1 = QSlider(Qt.Horizontal)
+            self.slider1.setRange(0, self.height - 1)
+            self.slider1.setEnabled(False)
+            self.slider1.valueChanged.connect(self.on_slice_change_request)
+            self.slider1.setFixedHeight(20)
+            c_layout.addWidget(self.slider1, 1, 1, alignment=Qt.AlignVCenter)
 
-    def set_active(self, event=None):
-        """
-        Notify the main app that this viewer is the actively focused window.
-        """
-        self.main_app.set_active_viewer_instance(self)
+            self.lbl_slice1 = QLabel("0")
+            self.lbl_slice1.setFixedWidth(40)
+            c_layout.addWidget(self.lbl_slice1, 1, 2, alignment=Qt.AlignVCenter)
+        else:
+            c_layout.addWidget(QWidget(), 1, 0, 1, 3)
 
-    def _get_image_slice(self, index, axis):
-        """Fetches the 2D image slice based on file type."""
-        if self.file_type == "tif":
-            return util.load_image(self.list_files[index], average=True)
-        elif self.file_type == "cine":
-            return util.extract_frame_cine(self.file_path, index)
-        elif self.file_type == "hdf":
-            if axis == 0:
-                return self.data_obj[index, :, :]
-            elif axis == 1:
-                return self.data_obj[:, index, :]
-            # This viewer only supports 3D data slice along axis 0 or 1.
-            return self.data_obj[index, :, :]
-        return None
+        self.btn_hist = QPushButton("Histogram")
+        self.btn_hist.clicked.connect(self.open_histogram)
+        c_layout.addWidget(self.btn_hist, 1, 3, alignment=Qt.AlignVCenter)
 
-    def perform_update(self, value):
-        """
-        The HEAVY function: Reads from disk and redraws Matplotlib.
-        Only runs when the user stops dragging the slider (debounced).
-        """
-        if self.closing:
+        self.btn_perc = QPushButton("Percentile")
+        self.btn_perc.clicked.connect(self.open_percentile)
+        c_layout.addWidget(self.btn_perc, 1, 4, alignment=Qt.AlignVCenter)
+
+        self.btn_save_tbl = QPushButton("Save Table")
+        self.btn_save_tbl.clicked.connect(self.save_current_table)
+        c_layout.addWidget(self.btn_save_tbl, 1, 5, alignment=Qt.AlignVCenter)
+
+        self.combo_aspect = QComboBox()
+        self.combo_aspect.addItems(["equal", "auto"])
+        self.combo_aspect.currentTextChanged.connect(self.update_aspect_ratio)
+        self.combo_aspect.setFixedHeight(util.BTN_H)
+        c_layout.addWidget(self.combo_aspect, 1, 6, alignment=Qt.AlignVCenter)
+
+        # --- Make buttons same width/height ---
+        buttons_equal = [self.btn_reset, self.btn_stats, self.btn_save_img,
+                         self.btn_hist, self.btn_perc, self.btn_save_tbl]
+        for b in buttons_equal:
+            b.setFixedHeight(util.BTN_H)
+        max_w = max(b.sizeHint().width() for b in buttons_equal)
+        for b in buttons_equal:
+            b.setFixedWidth(max_w)
+        # keep slider column expanding
+        c_layout.setColumnStretch(1, 1)
+        main_layout.addWidget(controls, 0)
+
+        # Status message
+        status_row = QWidget()
+        status_layout = QHBoxLayout(status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(4)
+        self.msg_label = QLabel(self.file_path)
+        self.msg_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.lbl_cursor = QLabel("x=—  y=—  value=—")
+        self.lbl_cursor.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_cursor.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        status_layout.addWidget(self.msg_label, 1)
+        status_layout.addWidget(self.lbl_cursor, 0)
+        main_layout.addWidget(status_row, 0)
+        self.imv.view.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
+        self.imv.setImage(self.viewer_state["image"])
+        self.imv.view.autoRange(padding=0)
+
+    def _on_mouse_moved(self, pos):
+        img = self.viewer_state.get("image")
+        if img is None or getattr(img, "ndim", 0) != 2:
             return
-        self.update_job = None
-        index = self.viewer_state["index"]
+        vb = self.imv.view
+        mouse_point = vb.mapSceneToView(pos)
+        x = int(np.floor(mouse_point.x()))
+        y = int(np.floor(mouse_point.y()))
+        h, w = img.shape[:2]
+        if 0 <= x < w and 0 <= y < h:
+            v = img[y, x]
+            if isinstance(v, (float, np.floating)):
+                vtxt = f"{float(v):.6g}"
+            else:
+                vtxt = str(v)
+            self.lbl_cursor.setText(f"x={x}  y={y}  value={vtxt}")
+        else:
+            self.lbl_cursor.setText("x=—  y=—  value=—")
+
+    def update_aspect_ratio(self, text):
+        if text == "equal":
+            self.imv.view.setAspectLocked(True)
+        else:
+            self.imv.view.setAspectLocked(False)
+
+    def reset(self):
+        img = self.viewer_state["image"]
+        if img is not None:
+            vmin, vmax = np.nanmin(img), np.nanmax(img)
+            if vmin == vmax:
+                vmin, vmax = vmin - 0.5, vmax + 0.5
+            hist_item = self.imv.getHistogramWidget().item
+            hist_item.region.setRegion([vmin, vmax])
+            hist_item.gradient.loadPreset('grey')
+            self.imv.setLevels(vmin, vmax)
+            hist_item.autoHistogramRange()
+            self.imv.view.autoRange(padding=0)
+
+            if hasattr(self, "combo_aspect"):
+                try:
+                    self.combo_aspect.blockSignals(True)
+                    self.combo_aspect.setCurrentText("equal")
+                finally:
+                    self.combo_aspect.blockSignals(False)
+            try:
+                self.update_aspect_ratio("equal")
+            except Exception:
+                pass
+
+    def on_slice_change_request(self, value):
+        if self.depth == 1 or (hasattr(self, 'height') and self.height == 1):
+            return
         axis = self.viewer_state["axis"]
-        # Load new image data (from disk/HDF)
-        shape_changed = False
+        if axis == 0:
+            self.lbl_slice0.setText(str(value))
+        else:
+            self.lbl_slice1.setText(str(value))
+        self.update_timer.start()
+
+    def perform_update(self):
+        axis = self.viewer_state["axis"]
+        index = self.slider0.value() if axis == 0 else \
+            (self.slider1.value() if hasattr(self, 'slider1') else 0)
+        prev = self.viewer_state.get("image")
+        prev_shape = prev.shape[:2] if (
+                    prev is not None and hasattr(prev, "shape")) else None
         try:
-            img = self._get_image_slice(index, axis)
             if self.file_type == "tif":
-                if self.viewer_state["image"].shape != img.shape:
-                    shape_changed = True
+                img = util.load_image(self.list_files[index], average=True)
+            elif self.file_type == "cine":
+                img = util.extract_frame_cine(self.file_path, index)
+            elif self.file_type == "hdf":
+                if axis == 0:
+                    img = self.data_obj[index, :, :]
+                else:
+                    img = self.data_obj[:, index, :]
         except Exception as e:
-            messagebox.showerror("Data Error",
-                                 f"Failed to load slice {index} along axis "
-                                 f"{axis}: {e}")
+            util.logger.error(f"Error loading slice: {e}")
             return
-        # Update state and derived properties
+
+        hei, wid = img.shape[:2]
         self.viewer_state["image"] = img
         self.viewer_state["index"] = index
-        self.viewer_state["axis"] = axis
-        if self.file_type == "hdf" and axis == 1:
-            height = self.viewer_state["img_depth"]
-            width = self.viewer_state["img_width"]
-            extent = [0, width, height, 0]
-            title_text = f"Axis: 1. Index: {index}. H x W: {height} x {width}"
-        else:
-            if self.file_type == "tif":
-                height, width = img.shape[:2]
-                if shape_changed:
-                    self.viewer_state["img_height"] = height
-                    self.viewer_state["img_width"] = width
-                extent = [0, width, height, 0]
-                title_text = f"Axis: 0. Index: {index}. " \
-                             f"H x W: {height} x {width}"
+
+        shape_changed = False
+        if self.file_type == "tif" and prev_shape is not None:
+            new_shape = (hei, wid)
+            shape_changed = (prev_shape != new_shape)
+
+        if shape_changed:
+            self.height, self.width = hei, wid
+            self.viewer_state["img_height"] = hei
+            self.viewer_state["img_width"] = wid
+            if self.viewer_state.get("last_profile_point"):
+                y0, x0 = self.viewer_state["last_profile_point"]
+                if not (0 <= y0 < hei and 0 <= x0 < wid):
+                    self.clear_profile()
             else:
-                height = self.viewer_state["img_height"]
-                width = self.viewer_state["img_width"]
-                extent = [0, width, height, 0]
-                title_text = f"Axis: 0. Index: {index}. H x W: " \
-                             f"{height} x {width}"
-        if np.isnan(img).any():
-            img = np.nan_to_num(img)
-        # Apply contrast and redraw image
-        if self.file_type == "tif" and shape_changed:
-            self.min_contrast_var.set(0.0)
-            self.max_contrast_var.set(1.0)
-            self.min_contrast_label_var.set("0.0")
-            self.max_contrast_label_var.set("100.0")
-            vmin = np.percentile(img, 0)
-            vmax = np.percentile(img, 100)
+                self.clear_profile()
+            self.imv.setImage(img, autoLevels=True, autoRange=True)
+            self.reset()
         else:
-            p_min = self.min_contrast_var.get() * 100.0
-            p_max = self.max_contrast_var.get() * 100.0
-            vmin = np.percentile(img, p_min)
-            vmax = np.percentile(img, p_max)
-            if vmin == vmax:
-                vmin -= 0.5
-                vmax += 0.5
-        self.slice0.set_data(img)
-        self.slice0.set_clim(vmin, vmax)
-        self.slice0.set_extent(extent)
-        # Update labels/titles
+            self.imv.setImage(img, autoLevels=False, autoRange=False)
+
         if self.file_type == "tif":
-            if shape_changed:
-                self.clear_plot_lines(clear_profile_data=True)
-            self.ax_img.set_title(title_text)
-            self.ax_img.set_aspect(self.aspect_var.get())
-            self.message_text_var.set(f"{self.file_path} | Slice: "
-                                      f"{index}, Axis: {axis}")
+            self.msg_label.setText(
+                f"{self.list_files[index]} | Slice: {index} | Axis: "
+                f"{axis} | HxW: {hei}x{wid}")
         else:
-            self.ax_img.set_title(title_text)
-            self.ax_img.set_aspect(self.aspect_var.get())
-            self.message_text_var.set(f"{self.file_path} | Slice: "
-                                      f"{index}, Axis: {axis}")
-        self.canvas_img.draw_idle()
-        # Update plot lines
-        self.clear_plot_lines(clear_profile_data=False)
-        if self.viewer_state["last_profile_point"] is not None:
-            y, x = self.viewer_state["last_profile_point"]
-            if 0 <= y < height and 0 <= x < width:
-                self.update_profile_plot(
-                    redraw_image_line=True,
-                    clicked_point=self.viewer_state["last_profile_point"],
-                    orientation=self.viewer_state["last_profile_orientation"])
-            else:
-                self.clear_plot_lines(clear_profile_data=True)
+            self.msg_label.setText(
+                f"{self.file_path} | Slice: {index} | Axis: "
+                f"{axis} | HxW: {hei}x{wid}")
+
+        if self.viewer_state["last_profile_point"]:
+            self.update_profile()
         else:
-            self.canvas_img.draw_idle()
+            self.on_view_range_changed()
 
-    def clear_plot_lines(self, clear_profile_data=False):
-        """Clears plot lines and/or profile data."""
-        # Remove line drawing from image plot
-        if self.plot_hline:
-            self.plot_hline.set_visible(False)
-            self.plot_hline.remove()
-            self.plot_hline = None
-        if self.plot_vline:
-            self.plot_vline.set_visible(False)
-            self.plot_vline.remove()
-            self.plot_vline = None
-        if clear_profile_data:
-            # Also reset the profile data/point itself
-            self.viewer_state["table"] = None
-            self.viewer_state["last_profile_point"] = None
-            self.viewer_state["last_profile_orientation"] = None
-            self.ax_plot.clear()
-            self.ax_plot.set_title("Line Profile")
-            self.ax_plot.set_xlabel("")
-            self.ax_plot.autoscale()
-            self.canvas_plot.draw_idle()
-        self.canvas_img.draw_idle()
+    def on_axis_select(self, axis_idx):
+        self.viewer_state["axis"] = axis_idx
+        if axis_idx == 0:
+            self.slider0.setEnabled(True)
+            if hasattr(self, 'slider1'):
+                self.slider1.setEnabled(False)
+        else:
+            self.slider0.setEnabled(False)
+            if hasattr(self, 'slider1'):
+                self.slider1.setEnabled(True)
 
-    def update_profile_plot(self, redraw_image_line=False,
-                            clicked_point=None,
-                            orientation=None):
-        """
-        Updates the line profile plot based on a new click, or redraws based
-        on previously stored state if called from slice/zoom update.
+        self.clear_profile()
+        self.perform_update()
+        self.reset()
 
-        clicked_point is (y, x)
-        """
-        img = self.viewer_state["image"]
-        if img is None:
-            self.clear_plot_lines(clear_profile_data=True)
+    def clear_profile(self):
+        self.viewer_state["table"] = None
+        self.viewer_state["last_profile_point"] = None
+        self.viewer_state["last_profile_orientation"] = None
+        self.v_line.hide()
+        self.h_line.hide()
+        self.plot_curve.setData([])
+
+    def on_view_range_changed(self):
+        if not self.viewer_state["last_profile_point"]:
             return
-        y_profile, x_profile = None, None
-        if clicked_point:
-            y_profile, x_profile = clicked_point
-            if orientation == 'horizontal':
-                self.viewer_state["table"] = img[y_profile, :]
-                self.viewer_state[
-                    "last_profile_orientation"] = 'horizontal'
-                self.viewer_state["last_profile_point"] = clicked_point
-            elif orientation == 'vertical':
-                self.viewer_state["table"] = img[:, x_profile]
-                self.viewer_state["last_profile_orientation"] = 'vertical'
-                self.viewer_state["last_profile_point"] = clicked_point
-            else:
-                self.viewer_state["table"] = None
-                return
-        elif self.viewer_state["table"] is not None:
-            orientation = self.viewer_state["last_profile_orientation"]
-            y_profile, x_profile = self.viewer_state["last_profile_point"]
-        else:
-            self.clear_plot_lines(clear_profile_data=True)
-            return
-        if redraw_image_line:
-            self.clear_plot_lines(clear_profile_data=False)
-            if orientation == 'horizontal':
-                self.plot_hline = self.ax_img.axhline(y_profile,
-                                                      color="red",
-                                                      lw=0.6)
-            elif orientation == 'vertical':
-                self.plot_vline = self.ax_img.axvline(x_profile,
-                                                      color="red",
-                                                      lw=0.6)
-            self.canvas_img.draw_idle()
-        # Redraw profile plot (Zoom-linked logic)
-        profile = self.viewer_state["table"]
-        self.ax_plot.clear()
-        self.ax_plot.plot(profile, color="blue", linewidth=0.8)
-        # Set title with the current coordinate
-        if orientation == 'horizontal':
-            self.ax_plot.set_title(f"Intensity at row: {y_profile}")
-            self.ax_plot.set_xlabel("X (Pixel Index)")
-        else:
-            self.ax_plot.set_title(f"Intensity at column: {x_profile}")
-            self.ax_plot.set_xlabel("Y (Pixel Index)")
-        # Handle Zoom Logic (Restored from previous version)
-        x_min_img, x_max_img = self.ax_img.get_xlim()
-        y_min_img, y_max_img = self.ax_img.get_ylim()
-        if orientation == 'horizontal':
-            profile_x_min, profile_x_max = x_min_img, x_max_img
-        else:
-            profile_x_min = min(y_min_img, y_max_img)
-            profile_x_max = max(y_min_img, y_max_img)
-        self.ax_plot.set_xlim(profile_x_min, profile_x_max)
-        # Automatic Y-scaling based on the visible zoom window
-        px_min, px_max = self.ax_plot.get_xlim()
-        idx_start = int(max(0, np.floor(min(px_min, px_max))))
-        idx_end = int(min(len(profile), np.ceil(max(px_min, px_max))))
-        if idx_end > idx_start:
-            local_data = profile[idx_start:idx_end]
-            if local_data.size > 0:
-                local_min = np.nanmin(local_data)
-                local_max = np.nanmax(local_data)
-                yrange = local_max - local_min
-                pad = yrange * 0.05 if yrange != 0 else 1.0
-                self.ax_plot.set_ylim(local_min - pad, local_max + pad)
-        self.canvas_plot.draw_idle()
 
-    def on_slice_change(self, value):
-        """
-        Lightweight debouncer for slice slider changes.
-        """
-        active_axis = self.axis_var.get()
-        val_int = int(float(value))
-        if active_axis == "axis 0" or self.file_type != "hdf":
-            self.viewer_state["index"] = val_int
-            self.viewer_state["axis"] = 0
-            self.slice0_label_var.set(f"{val_int}")
-        elif active_axis == "axis 1":
-            self.viewer_state["index"] = val_int
-            self.viewer_state["axis"] = 1
-            self.slice1_label_var.set(f"{val_int}")
-        if self.update_job:
-            self.main_win.after_cancel(self.update_job)
-        # Debounce the heavy update operation
-        self.update_job = self.main_win.after(10,
-                                              lambda: self.perform_update(
-                                                  value))
-
-    def on_contrast_change(self, value):
-        """Called when contrast sliders move."""
-        if self.closing or not self.main_win.winfo_exists():
+        orientation = self.viewer_state["last_profile_orientation"]
+        data = self.viewer_state["table"]
+        if data is None:
             return
         img = self.viewer_state["image"]
         if img is None:
             return
-        min_val = self.min_contrast_var.get()
-        max_val = self.max_contrast_var.get()
-        p_min = min_val * 100.0
-        p_max = max_val * 100.0
-        # Enforce min < max
-        if p_min >= p_max:
-            if p_max > 0.0:
-                p_min = p_max - 0.1
-                self.min_contrast_var.set(p_min / 100.0)
-            else:
-                p_min, p_max = 0.0, 0.1
-                self.min_contrast_var.set(0.0)
-                self.max_contrast_var.set(0.001)
-        self.min_contrast_label_var.set(f"{p_min:.1f}")
-        self.max_contrast_label_var.set(f"{p_max:.1f}")
-        vmin = np.percentile(img, p_min)
-        vmax = np.percentile(img, p_max)
-        if vmin == vmax:  # Handle flat data
-            vmin -= 0.5
-            vmax += 0.5
-        self.slice0.set_clim(vmin, vmax)
-        self.canvas_img.draw_idle()
-
-    def reset_contrast(self, event=None):
-        """Resets the contrast sliders and updates the image."""
-        self.min_contrast_var.set(0.0)
-        self.max_contrast_var.set(1.0)
-        self.on_contrast_change(None)
-
-    def on_axis_select(self):
-        """Handle Axis 0 / Axis 1 radio button selection (HDF only)."""
-        if self.file_type != "hdf":
+        h, w = img.shape[:2]
+        n = w if orientation == "horizontal" else h
+        if n <= 1:
             return
-        if self.axis_var.get() == "axis 0":
-            self.slider0.config(state=tk.NORMAL)
-            self.slider1.config(state=tk.DISABLED)
-            self.slider0.config(to=self.viewer_state["img_depth"] - 1)
+        vr = self.imv.view.viewRange()
+        if orientation == "horizontal":
+            x_min, x_max = vr[0][0], vr[0][1]
         else:
-            self.slider0.config(state=tk.DISABLED)
-            self.slider1.config(state=tk.NORMAL)
-            self.slider1.config(to=self.viewer_state["img_height"] - 1)
-        current_slider = \
-            self.slider0 if self.axis_var.get() == "axis 0" else self.slider1
-        current_slider.set(0)
-        self.on_slice_change(0)
-        self.ax_img.autoscale()
-        self.clear_plot_lines(clear_profile_data=True)
-        self.canvas_img.draw_idle()
+            x_min, x_max = vr[1][0], vr[1][1]
 
-    def on_scroll(self, event):
-        """Scroll to change slice index."""
-        if event.inaxes != self.ax_img:
+        if not (np.isfinite(x_min) and np.isfinite(x_max)):
             return
-        active_axis = self.axis_var.get()
-        scroll_step = -int(np.sign(event.step))
-        if active_axis == "axis 0" or self.file_type != "hdf":
-            slider = self.slider0
-            var = self.slice0_var
+
+        x0 = int(np.clip(np.floor(min(x_min, x_max)), 0, n - 1))
+        x1 = int(np.clip(np.ceil(max(x_min, x_max)), 0, n - 1))
+        if x1 <= x0:
+            return
+        # Set plot X range strictly in index space
+        self.plot_widget.setXRange(x0, x1, padding=0)
+        # Robust Y range from the visible segment
+        seg = np.asarray(data[x0:x1], dtype=np.float64)
+        seg = seg[np.isfinite(seg)]
+        if seg.size == 0:
+            return
+        lmin = float(seg.min())
+        lmax = float(seg.max())
+        pad = (lmax - lmin) * 0.05 if lmax != lmin else 1.0
+        self.plot_widget.setYRange(lmin - pad, lmax + pad, padding=0)
+
+    def on_image_click(self, event):
+        if event.button() not in [Qt.LeftButton, Qt.RightButton]:
+            return
+        pos = event.pos()
+        if self.imv.view.sceneBoundingRect().contains(pos):
+            mouse_point = self.imv.view.mapSceneToView(pos)
+            x, y = int(mouse_point.x()), int(mouse_point.y())
+            img = self.viewer_state["image"]
+            h, w = img.shape[:2]
+            if 0 <= x < w and 0 <= y < h:
+                orientation = 'horizontal' \
+                    if event.button() == Qt.LeftButton else 'vertical'
+                self.viewer_state["last_profile_point"] = (y, x)
+                self.viewer_state["last_profile_orientation"] = orientation
+                self.update_profile()
+
+    def update_profile(self):
+        if not self.viewer_state["last_profile_point"]:
+            return
+        y, x = self.viewer_state["last_profile_point"]
+        orientation = self.viewer_state["last_profile_orientation"]
+        img = self.viewer_state["image"]
+        if orientation == 'horizontal':
+            self.h_line.setPos(y)
+            self.h_line.show()
+            self.v_line.hide()
+            data = np.asarray(img[y, :], dtype=np.float64)
+            self.plot_widget.setTitle(f"Intensity at row: {y}")
         else:
-            slider = self.slider1
-            var = self.slice1_var
-        current_val = var.get()
-        max_val = slider.cget('to')
-        new_val_int = current_val + scroll_step
-        new_val_int = int(max(min(new_val_int, max_val), 0))
-        if new_val_int != current_val:
-            var.set(new_val_int)
-            self.on_slice_change(new_val_int)
-
-    def on_zoom_pan(self, ax):
-        """Callback for when the image axes are zoomed or panned."""
-        if self.viewer_state["table"] is not None:
-            self.update_profile_plot(redraw_image_line=False)
-
-    def plot_intensity_along_clicked_point(self, event):
-        """Generate a line profile based on mouse click."""
-        self.set_active()  # Make sure this viewer is active
-        if event.inaxes != self.ax_img:
-            return
-        if event.xdata is None or event.ydata is None:
-            return
-        img_height, img_width = self.viewer_state['image'].shape
-        x_click, y_click = int(event.xdata), int(event.ydata)
-        if not (0 <= y_click < img_height and 0 <= x_click < img_width):
-            return
-        y_profile, x_profile = y_click, x_click
-        if event.button == 1:  # Left click: Horizontal
-            orientation = 'horizontal'
-        elif event.button == 3:  # Right click: Vertical
-            orientation = 'vertical'
-        else:
-            return
-        clicked_point = (y_profile, x_profile)
-        self.update_profile_plot(redraw_image_line=True,
-                                 clicked_point=clicked_point,
-                                 orientation=orientation)
-
-    def update_aspect_ratio(self, event=None):
-        """Updates the aspect ratio."""
-        if self.closing or not self.main_win.winfo_exists():
-            return
-        val = self.aspect_var.get().strip()
-        if val.lower() in ["equal", "auto"]:
-            new_aspect = val.lower()
-        else:
-            try:
-                new_aspect = float(val)
-            except ValueError:
-                self.aspect_var.set("equal")
-                new_aspect = "equal"
-        self.ax_img.set_aspect(new_aspect)
-        self.canvas_img.draw_idle()
-        self.update_profile_plot(redraw_image_line=False)
+            self.v_line.setPos(x)
+            self.v_line.show()
+            self.h_line.hide()
+            # data = img[:, x]
+            data = np.asarray(img[:, x], dtype=np.float64)
+            self.plot_widget.setTitle(f"Intensity at column: {x}")
+        if not np.isfinite(data).all():
+            data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+        self.viewer_state["table"] = data
+        self.plot_curve.setData(data)
+        self.on_view_range_changed()
 
     def open_statistics(self):
-        """Opens statistics window for the current image slice."""
-        img = self.viewer_state["image"]
-        if img is None:
-            messagebox.showwarning("No Image", "No image data to analyze.")
-            return
-        stats = util.get_image_statistics(img)
-        title = f"Statistics: {os.path.basename(self.file_path)}"
-        help_text = f" Slice: {self.viewer_state['index']}. " \
-                    f"Axis {self.viewer_state['axis']}"
-        self.main_app.show_statistics_table(stats, title=title,
-                                            help_text=help_text)
+        stats = util.get_image_statistics(self.viewer_state["image"])
+        win = StatisticsWindow(self, title=f"Stats", stats=stats)
+        win.show()
 
     def open_histogram(self):
-        """Opens histogram window for the current image slice."""
-        img = self.viewer_state["image"]
-        if img is None:
-            messagebox.showwarning("No Image", "No image data to analyze.")
-            return
-        title = f"{os.path.basename(self.file_path)}"
-        help_text = f" slice: {self.viewer_state['index']} axis: " \
-                    f"{self.viewer_state['axis']}."
-        self.main_app.show_histogram(img, help_text=help_text, title=title)
+        win = PlotWindow1D(self, title="Histogram",
+                           data_y=self.viewer_state["image"],
+                           plot_type="histogram")
+        win.show()
 
     def open_percentile(self):
-        """Opens percentile plot window for the current image slice."""
-        img = self.viewer_state["image"]
-        if img is None:
-            messagebox.showwarning("No Image", "No image data to analyze.")
-            return
         try:
-            percentiles, density = util.get_percentile_density(img)
-        except ValueError as e:
-            messagebox.showerror("Error",
-                                 f"Could not calculate percentiles:\n{e}")
-            return
-        title = f"Percentile Plot: {os.path.basename(self.file_path)}"
-        help_text = f" slice: {self.viewer_state['index']} axis: " \
-                    f"{self.viewer_state['axis']}"
-        self.main_app.show_percentile_plot(percentiles, density,
-                                           help_text=help_text,
-                                           title=title)
-
-    def on_close(self):
-        """Cleanup and notify main app upon window close"""
-        self.closing = True
-        if self.update_job:
-            try:
-                self.main_win.after_cancel(self.update_job)
-            except tk.TclError:
-                pass
-            self.update_job = None
-        try:
-            self.canvas_img.mpl_disconnect(self.id_scroll)
-            self.canvas_img.mpl_disconnect(self.id_press)
-            self.ax_img.callbacks.disconnect(self.id_xlim)
-            self.ax_img.callbacks.disconnect(self.id_ylim)
+            percentiles, density = util.get_percentile_density(
+                self.viewer_state["image"])
+            win = PlotWindow1D(self, title="Percentile", data_x=percentiles,
+                               data_y=density, plot_type="percentile")
+            win.show()
         except Exception:
             pass
-        for var_name in (
-                "message_text_var",
-                "axis_var",
-                "slice0_var",
-                "slice1_var",
-                "min_contrast_var",
-                "max_contrast_var",
-                "slice0_label_var",
-                "slice1_label_var",
-                "min_contrast_label_var",
-                "max_contrast_label_var",
-                "aspect_var",
-        ):
-            var = getattr(self, var_name, None)
-            if var is not None:
-                try:
-                    var.set("")
-                except tk.TclError:
-                    pass
-                setattr(self, var_name, None)
+
+    def save_current_image(self):
+        if hasattr(self.parent_app, "set_active_viewer"):
+            self.parent_app.set_active_viewer(self)
+        self.parent_app.save_to_image()
+
+    def save_current_table(self):
+        if hasattr(self.parent_app, "set_active_viewer"):
+            self.parent_app.set_active_viewer(self)
+        self.parent_app.save_to_table()
+
+    def focusInEvent(self, event):
+        p = self.parent_app
+        if p and hasattr(p, 'set_active_viewer'):
+            p.set_active_viewer(self)
+        super().focusInEvent(event)
+
+    def closeEvent(self, event):
+        try:
+            if hasattr(self, "update_timer") and self.update_timer:
+                self.update_timer.stop()
+        except Exception:
+            pass
+        try:
+            self.imv.view.scene().sigMouseClicked.disconnect(
+                self.on_image_click)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            self.imv.view.scene().sigMouseMoved.disconnect(self._on_mouse_moved)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            self.imv.view.sigRangeChanged.disconnect(self.on_view_range_changed)
+        except (TypeError, RuntimeError):
+            pass
         if self.hdf_file_obj:
             try:
                 self.hdf_file_obj.close()
             except Exception:
                 pass
-            self.hdf_file_obj = None
-        self.main_app.notify_viewer_closed(self)
-        self.viewer_state.clear()
         try:
-            self.main_win.destroy()
-        except tk.TclError:
+            if hasattr(self, "imv") and self.imv is not None:
+                try:
+                    self.imv.clear()
+                except Exception:
+                    pass
+                try:
+                    self.imv.setParent(None)
+                except Exception:
+                    pass
+                try:
+                    self.imv.deleteLater()
+                except Exception:
+                    pass
+                self.imv = None
+        except Exception:
             pass
+        try:
+            if hasattr(self, "plot_widget") and self.plot_widget is not None:
+                try:
+                    self.plot_widget.clear()
+                except Exception:
+                    pass
+                try:
+                    self.plot_widget.setParent(None)
+                except Exception:
+                    pass
+                try:
+                    self.plot_widget.deleteLater()
+                except Exception:
+                    pass
+                self.plot_widget = None
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+
+class ExportDialog(BaseWindow):
+    """
+    Dialog for Export parameters
+    """
+
+    def __init__(self, parent_app, file_path, file_type, hdf_key=None,
+                 shape=None):
+        super().__init__(None, f"Export TIF: {os.path.basename(file_path)}",
+                         0.5)
+        self.input_width = 80
+        self.parent_app = parent_app
+        self.file_path = file_path
+        self.file_type = file_type  # "hdf" | "cine"
+        self.hdf_key = hdf_key
+        self.shape = tuple(shape) if shape else (0, 0, 0)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                  util.UI_MARGIN_S, util.UI_MARGIN_S)
+        layout.setSpacing(util.UI_SPACING_L)
+
+        # ---------------- Destination ----------------
+        grp_dest = QGroupBox("Destination")
+        gl_dest = QGridLayout(grp_dest)
+        gl_dest.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                   util.UI_MARGIN_S, util.UI_MARGIN_S)
+        gl_dest.setHorizontalSpacing(util.UI_SPACING_S)
+        gl_dest.setVerticalSpacing(util.UI_SPACING_S)
+
+        self.txt_path = QLabel("No folder selected...")
+        self.txt_path.setFrameStyle(QFrame.StyledPanel | QFrame.Sunken)
+
+        btn_browse = QPushButton("Browse base folder")
+        btn_browse.clicked.connect(self.browse_folder)
+
+        self.edt_subfolder = QLineEdit("tifs")
+        btn_mkdir = QPushButton("Make subfolder")
+        btn_mkdir.clicked.connect(self.make_subfolder)
+
+        gl_dest.addWidget(self.txt_path, 0, 0)
+        gl_dest.addWidget(btn_browse, 0, 1)
+        gl_dest.addWidget(self.edt_subfolder, 1, 0)
+        gl_dest.addWidget(btn_mkdir, 1, 1)
+
+        layout.addWidget(grp_dest)
+
+        # ---------------- Slicing ----------------
+        grp_slice = QGroupBox("Slicing")
+        gl_slice = QGridLayout(grp_slice)
+        gl_slice.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                    util.UI_MARGIN_S, util.UI_MARGIN_S)
+        gl_slice.setHorizontalSpacing(util.UI_SPACING_S)
+        gl_slice.setVerticalSpacing(util.UI_SPACING_S)
+
+        self.combo_axis = QComboBox()
+        self.combo_axis.addItems(["Axis 0", "Axis 1"])
+        if file_type == "cine":
+            self.combo_axis.setEnabled(False)
+
+        gl_slice.addWidget(QLabel("Export along:"), 0, 0)
+        gl_slice.addWidget(self.combo_axis, 0, 1)
+
+        gl_slice.addWidget(QLabel("Start:"), 1, 0)
+        self.edt_start = QLineEdit("0")
+        gl_slice.addWidget(self.edt_start, 1, 1, alignment=Qt.AlignLeft)
+
+        gl_slice.addWidget(QLabel("Stop (-1=End):"), 1, 2)
+        self.edt_stop = QLineEdit("-1")
+        gl_slice.addWidget(self.edt_stop, 1, 3, alignment=Qt.AlignLeft)
+
+        gl_slice.addWidget(QLabel("Step:"), 1, 4)
+        self.edt_step = QLineEdit("1")
+        gl_slice.addWidget(self.edt_step, 1, 5, alignment=Qt.AlignLeft)
+        layout.addWidget(grp_slice)
+
+        # ---------------- Cropping ----------------
+        grp_crop = QGroupBox("Cropping")
+        gl_crop = QGridLayout(grp_crop)
+        gl_crop.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                   util.UI_MARGIN_S, util.UI_MARGIN_S)
+        gl_crop.setHorizontalSpacing(util.UI_SPACING_S)
+        gl_crop.setVerticalSpacing(util.UI_SPACING_S)
+        gl_crop.setColumnStretch(0, 0)
+        gl_crop.setColumnStretch(1, 0)
+        gl_crop.setColumnStretch(2, 0)
+        gl_crop.setColumnStretch(3, 0)
+        gl_crop.setColumnStretch(4, 1)
+
+        gl_crop.addWidget(QLabel("Y-Start:"), 0, 0)
+        self.edt_ystart = QLineEdit("0")
+        gl_crop.addWidget(self.edt_ystart, 0, 1)
+
+        gl_crop.addWidget(QLabel("Y-Stop (-1):"), 0, 2)
+        self.edt_ystop = QLineEdit("-1")
+        gl_crop.addWidget(self.edt_ystop, 0, 3)
+
+        gl_crop.addWidget(QLabel("X-Start:"), 1, 0)
+        self.edt_xstart = QLineEdit("0")
+        gl_crop.addWidget(self.edt_xstart, 1, 1)
+
+        gl_crop.addWidget(QLabel("X-Stop (-1):"), 1, 2)
+        self.edt_xstop = QLineEdit("-1")
+        gl_crop.addWidget(self.edt_xstop, 1, 3)
+        layout.addWidget(grp_crop)
+
+        # ---------------- Rescaling ----------------
+        grp_rescale = QGroupBox("Rescaling")
+        gl_resc = QGridLayout(grp_rescale)
+        gl_resc.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                   util.UI_MARGIN_S, util.UI_MARGIN_S)
+        gl_resc.setHorizontalSpacing(util.UI_SPACING_S)
+        gl_resc.setVerticalSpacing(util.UI_SPACING_S)
+
+        self.combo_rescale = QComboBox()
+        self.combo_rescale.addItems(["None", "8-bit", "16-bit"])
+        gl_resc.addWidget(QLabel("Rescale to:"), 0, 0)
+        gl_resc.addWidget(self.combo_rescale, 0, 1)
+
+        gl_resc.addWidget(QLabel("Min %:"), 1, 0)
+        self.edt_minp = QLineEdit("0")
+        gl_resc.addWidget(self.edt_minp, 1, 1)
+
+        gl_resc.addWidget(QLabel("Max %:"), 1, 2)
+        self.edt_maxp = QLineEdit("100")
+        gl_resc.addWidget(self.edt_maxp, 1, 3)
+
+        gl_resc.addWidget(QLabel("Sample Step:"), 1, 4)
+        self.edt_samp = QLineEdit("10")
+        gl_resc.addWidget(self.edt_samp, 1, 5)
+        layout.addWidget(grp_rescale)
+
+        # ---------------- Run ----------------
+        h_run = QHBoxLayout()
+        h_run.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                 util.UI_MARGIN_S, util.UI_MARGIN_S)
+        h_run.setSpacing(util.UI_SPACING_S)
+
+        h_run.addWidget(QLabel("Prefix:"))
+        self.edt_prefix = QLineEdit("img")
+        self.edt_prefix.setAlignment(Qt.AlignLeft)
+        h_run.addWidget(self.edt_prefix)
+        h_run.addStretch(0)
+
+        self.btn_export = QPushButton("Export")
+        self.btn_export.setFixedWidth(150)
+        self.btn_export.clicked.connect(self.run_export)
+        h_run.addWidget(self.btn_export)
+
+        layout.addLayout(h_run)
+
+        self.lbl_status = QLabel(f"Shape: {self.shape}")
+        layout.addWidget(self.lbl_status)
+
+        for w in (
+                self.edt_start,
+                self.edt_stop,
+                self.edt_step,
+                self.edt_ystart,
+                self.edt_ystop,
+                self.edt_xstart,
+                self.edt_xstop,
+                self.edt_minp,
+                self.edt_maxp,
+                self.edt_samp,
+                self.edt_prefix,
+        ):
+            w.setAlignment(Qt.AlignLeft)
+            w.setFixedWidth(self.input_width)
+
+        self.adjustSize()
+        self.setMinimumSize(self.sizeHint())
+
+    def browse_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Select Destination")
+        if d:
+            self.txt_path.setText(os.path.normpath(d))
+
+    def make_subfolder(self):
+        base = self.txt_path.text().strip()
+        sub = self.edt_subfolder.text().strip()
+
+        if base == "No folder selected..." or not os.path.isdir(base):
+            QMessageBox.critical(self, "Error",
+                                 "Please select a base folder first.")
+            return
+        if not sub:
+            QMessageBox.information(self, "Input needed",
+                                    "Please give name for the new folder.")
+            return
+
+        path = os.path.join(base, sub)
+        try:
+            os.makedirs(path, exist_ok=True)
+            self.txt_path.setText(path)
+            self.edt_subfolder.setText("")
+            QMessageBox.information(self, "Success", f"Folder created:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    @staticmethod
+    def _parse_int(value, default=0, allow_negative=False):
+        try:
+            v = int(str(value).strip())
+            if not allow_negative and v < 0 and v != -1:
+                return default
+            return v
+        except Exception:
+            return default
+
+    def _axis(self) -> int:
+        return 0 if self.combo_axis.currentIndex() == 0 else 1
+
+    def validate_export_parameters(self):
+        out_path = self.txt_path.text().strip()
+        if not os.path.isdir(out_path):
+            QMessageBox.critical(self, "Invalid Input",
+                                 "Please select a valid folder.")
+            return None
+
+        prefix = self.edt_prefix.text().strip()
+        if not prefix:
+            QMessageBox.critical(self, "Invalid Input",
+                                 "Please enter a file prefix.")
+            return None
+
+        depth, height, width = self.shape
+        axis = self._axis()
+        slice_dim = depth if axis == 0 else height
+        s_start = self._parse_int(self.edt_start.text(), 0)
+        s_stop = self._parse_int(self.edt_stop.text(), slice_dim,
+                                 allow_negative=True)
+        s_step = self._parse_int(self.edt_step.text(), 1)
+        if s_step == 0:
+            s_step = 1
+
+        if s_stop == -1 or s_stop > slice_dim:
+            s_stop = slice_dim
+        if s_start < 0:
+            s_start = 0
+        if s_start >= s_stop:
+            QMessageBox.critical(self, "Invalid Input",
+                                 "Start index must be < Stop index.")
+            return None
+        # Crop dims: for axis==0, each slice is (height, width)
+        # for axis==1, each slice is (depth, width)
+        y_dim = height if axis == 0 else depth
+        x_dim = width
+
+        y_start = self._parse_int(self.edt_ystart.text(), 0)
+        y_stop = self._parse_int(self.edt_ystop.text(), y_dim,
+                                 allow_negative=True)
+        x_start = self._parse_int(self.edt_xstart.text(), 0)
+        x_stop = self._parse_int(self.edt_xstop.text(), x_dim,
+                                 allow_negative=True)
+
+        if y_stop == -1 or y_stop > y_dim:
+            y_stop = y_dim
+        if x_stop == -1 or x_stop > x_dim:
+            x_stop = x_dim
+
+        y_start = max(0, min(y_start, y_dim))
+        x_start = max(0, min(x_start, x_dim))
+
+        if y_start >= y_stop or x_start >= x_stop:
+            QMessageBox.critical(self, "Invalid Input",
+                                 "Invalid crop dimensions.")
+            return None
+        # Rescale
+        rescale = self.combo_rescale.currentText()
+
+        try:
+            min_p = float(self.edt_minp.text().strip())
+            max_p = float(self.edt_maxp.text().strip())
+        except Exception:
+            QMessageBox.critical(self, "Invalid Input",
+                                 "Percentiles must be numbers.")
+            return None
+        if min_p >= max_p:
+            QMessageBox.critical(self, "Invalid Input",
+                                 "Min Percentile must be < Max.")
+            return None
+
+        slice_skip = self._parse_int(self.edt_samp.text(), 1)
+        if slice_skip <= 0:
+            slice_skip = 1
+
+        return {
+            "output_path": out_path,
+            "input_path": self.file_path,
+            "hdf_key": self.hdf_key,
+            "prefix": prefix,
+            "axis": axis,
+            "slice_start": s_start,
+            "slice_stop": s_stop,
+            "slice_step": s_step,
+            "y_start": y_start,
+            "y_stop": y_stop,
+            "x_start": x_start,
+            "x_stop": x_stop,
+            "rescale": rescale,
+            "min_percent": min_p,
+            "max_percent": max_p,
+            "slice_skip": slice_skip,
+        }
+
+    def run_export(self):
+        params = self.validate_export_parameters()
+        if params is None:
+            return
+
+        self.btn_export.setEnabled(False)
+
+        def _status(msg):
+            self.lbl_status.setText(str(msg))
+            QApplication.processEvents()
+
+        _status("Exporting...")
+
+        try:
+            res = util.export_hdf_cine_to_tif(params, _status)
+            if res == "Success":
+                QMessageBox.information(self, "Done",
+                                        f"Export Complete\n\nSaved to:"
+                                        f"\n{params['output_path']}")
+                self.lbl_status.setText(f"Shape: {self.shape}")
+            else:
+                self.lbl_status.setText(str(res))
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            self.lbl_status.setText(f"Shape: {self.shape}")
+        finally:
+            self.btn_export.setEnabled(True)
+
+
+class DatviewMainWindow(QMainWindow):
+    """Main Application Window"""
+    # Signals for interactions.py to connect to
+    sig_browse_requested = Signal()
+    sig_folder_selected = Signal()
+    sig_file_select_changed = Signal()
+    sig_file_double_clicked = Signal(object)
+    sig_launch_inter_requested = Signal()
+    sig_launch_table_requested = Signal()
+    sig_launch_export_requested = Signal()
+    sig_tree_expand_requested = Signal(object)
+    sig_ctx_copy_full_path = Signal(str)
+    sig_ctx_rename_file = Signal(str)
+    sig_ctx_make_subfolder = Signal(str)
+
+    def __init__(self, base_folder="."):
+        super().__init__()
+        self.setWindowTitle(f"{util.APP_NAME}")
+        icon_path = os.path.join(os.path.dirname(__file__),
+                                 "..", "assets", "datview_icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        self.setGeometry(calculate_geometry(util.MAIN_WIN_RATIO))
+
+        self.base_folder = Path(base_folder).expanduser()
+        if not self.base_folder.exists():
+            self.base_folder = Path.home()
+        self.selected_folder_path = str(self.base_folder)
+
+        # Central Widget & Layout
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QGridLayout(central)
+        main_layout.setContentsMargins(util.UI_MARGIN_M, util.UI_MARGIN_M,
+                                       util.UI_MARGIN_M, util.UI_MARGIN_M)
+        main_layout.setSpacing(util.UI_SPACING_L)
+
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(util.UI_MARGIN_M, 0, 0, 0)
+        header_layout.setSpacing(util.UI_SPACING_L)
+
+        title = QLabel("Current base: ")
+        self.lbl_base_folder = QLabel(str(self.base_folder))
+        self.lbl_base_folder.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        btn_select_folder = QPushButton("Select Base Folder")
+        btn_select_folder.clicked.connect(self.sig_browse_requested)
+
+        header_layout.addWidget(title, 0)
+        header_layout.addWidget(self.lbl_base_folder, 1)
+        header_layout.addWidget(btn_select_folder, 0)
+
+        main_layout.addWidget(header, 0, 0, 1, 3)
+
+        # --- Body Splitter ---
+        body_splitter = QSplitter(Qt.Horizontal)
+
+        # Left: Folder Tree
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setMinimumWidth(util.TREE_MIN_W)
+        self.tree.itemExpanded.connect(
+            lambda item: self.sig_tree_expand_requested.emit(item))
+        self.tree.itemSelectionChanged.connect(self.sig_folder_selected)
+        body_splitter.addWidget(self.tree)
+
+        # Right: File list + actions
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(util.UI_SPACING_M)
+
+        # File list
+        self.list_files = QListWidget()
+        self.list_files.itemSelectionChanged.connect(
+            self.sig_file_select_changed)
+        self.list_files.itemDoubleClicked.connect(
+            lambda item: self.sig_file_double_clicked.emit(item))
+        self.list_files.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_files.customContextMenuRequested.connect(
+            self.on_file_context_menu)
+        right_layout.addWidget(self.list_files, 1)
+
+        actions_group = QGroupBox("")
+        vs_layout = QGridLayout(actions_group)
+        vs_layout.setContentsMargins(util.UI_MARGIN_S, util.UI_MARGIN_S,
+                                     util.UI_MARGIN_S, util.UI_MARGIN_S)
+        vs_layout.setHorizontalSpacing(util.UI_SPACING_M)
+        vs_layout.setVerticalSpacing(util.UI_SPACING_M)
+
+        btn_inter = QPushButton("Interactive Viewer")
+        btn_inter.setToolTip(
+            "View HDF dataset (array), CINE, or TIF stack in folder")
+        btn_inter.clicked.connect(self.sig_launch_inter_requested)
+        vs_layout.addWidget(btn_inter, 0, 0)
+
+        btn_table = QPushButton("Table Viewer")
+        btn_table.setToolTip("Show table of 1D/2D dataset in a HDF file")
+        btn_table.clicked.connect(self.sig_launch_table_requested)
+        vs_layout.addWidget(btn_table, 0, 1)
+
+        self.combo_hdf = QComboBox()
+        self.combo_hdf.setToolTip("HDF keys to array-like datasets")
+        self.combo_hdf.setEnabled(False)
+        self.combo_hdf.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_hdf.setFixedHeight(util.BTN_H)
+        vs_layout.addWidget(self.combo_hdf, 0, 2)
+        self.combo_hdf.currentIndexChanged.connect(
+            lambda _idx: self.list_files.setFocus())
+
+        btn_export = QPushButton("Export to TIF")
+        btn_export.setToolTip("Export 3D HDF/CINE dataset to TIF files")
+        btn_export.clicked.connect(self.sig_launch_export_requested)
+        vs_layout.addWidget(btn_export, 0, 3)
+
+        # --- Uniform button sizing ---
+        buttons_equal = [btn_inter, btn_table, btn_export]
+
+        for b in buttons_equal:
+            b.setMinimumHeight(util.BTN_H)
+
+        max_width = max(b.sizeHint().width() for b in buttons_equal)
+        for b in buttons_equal:
+            b.setFixedWidth(max_width)
+
+        right_layout.addWidget(actions_group, 0)
+        body_splitter.addWidget(right_panel)
+
+        # Make right side larger by default
+        body_splitter.setStretchFactor(0, 1)
+        body_splitter.setStretchFactor(1, 3)
+
+        main_layout.addWidget(body_splitter, 1, 0, 1, 3)
+
+        self._init_statusbar()
+
+        main_layout.setRowStretch(1, 1)
+        main_layout.setColumnStretch(1, 1)
+
+    def _init_statusbar(self):
+        sb = QStatusBar(self)
+        sb.setSizeGripEnabled(True)
+        self.setStatusBar(sb)
+        sb.showMessage("Ready")
+
+        self.sb_filetype = QLabel("")
+        self.sb_dims = QLabel("")
+
+        self.sb_filetype.setObjectName("StatusPill")
+        self.sb_dims.setObjectName("StatusPill")
+
+        sb.addPermanentWidget(self.sb_filetype)
+        sb.addPermanentWidget(self.sb_dims)
+
+    def on_file_context_menu(self, pos):
+        if not getattr(self, "selected_folder_path", ""):
+            return
+
+        item = self.list_files.itemAt(pos)
+        menu = QMenu(self)
+
+        act_mkdir = menu.addAction("Make sub-folder")
+
+        act_copy = None
+        act_rename = None
+        full_path = None
+
+        if item is not None:
+            fname = item.text()
+            full_path = os.path.join(self.selected_folder_path, fname)
+            act_copy = menu.addAction("Copy full path")
+            act_rename = menu.addAction("Change file name")
+
+        if item is not None and full_path and os.path.exists(full_path):
+            info = util.get_file_created_size_lines(full_path)
+            if info:
+                menu.addSeparator()
+                a1 = menu.addAction(info[0])
+                a1.setEnabled(False)
+                a2 = menu.addAction(info[1])
+                a2.setEnabled(False)
+
+        chosen = menu.exec(QCursor.pos())
+        if chosen is None:
+            return
+
+        if chosen == act_mkdir:
+            self.sig_ctx_make_subfolder.emit(self.selected_folder_path)
+        elif act_copy is not None and chosen == act_copy and full_path:
+            self.sig_ctx_copy_full_path.emit(full_path)
+        elif act_rename is not None and chosen == act_rename and full_path:
+            self.sig_ctx_rename_file.emit(full_path)

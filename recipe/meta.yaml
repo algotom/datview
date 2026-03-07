@@ -1,5 +1,5 @@
 {% set name = "datview" %}
-{% set version = "1.4.1" %}
+{% set version = "2.0.0" %}
 
 package:
   name: {{ name|lower }}
@@ -25,16 +25,14 @@ requirements:
     - h5py
     - hdf5plugin
     - pillow
-    - matplotlib
+    - PySide6
+    - pyqtgraph
 
 test:
   imports:
     - datview
-  commands:
-    - datview --help
   requires:
     - pip
-    - matplotlib-base
 
 about:
   home: https://github.com/algotom/datview
