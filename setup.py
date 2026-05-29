@@ -14,7 +14,7 @@ README = (HERE / "README.md").read_text()
 
 setuptools.setup(
     name="datview",
-    version="2.0.0",
+    version="2.0.1",
     author="Nghia Vo",
     author_email="nvo@bnl.gov",
     description="GUI software for viewing images, text, cine, and HDF files.",

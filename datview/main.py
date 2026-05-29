@@ -5,6 +5,7 @@ import argparse
 from PySide6.QtCore import QTimer
 import datview.lib.utilities as util
 from datview.lib.interactions import DatviewInteraction
+from datview import __version__
 
 display_msg = """
 ===============================================================================
@@ -19,6 +20,8 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=display_msg,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-v", "--version", action="version",
+                        version=f"Datview {__version__}")
     parser.add_argument("-b", "--base", type=str, default=None,
                         help="Specify the base folder")
     parser.add_argument("path", type=str, nargs="?", default=None,
