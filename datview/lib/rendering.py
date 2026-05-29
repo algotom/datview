@@ -96,6 +96,14 @@ THEME_QSS = f"""
 """
 
 
+if platform.system() == "Linux":
+    for var in ("FONTCONFIG_FILE", "FONTCONFIG_PATH"):
+        if var in os.environ and not os.environ[var].strip():
+            del os.environ[var]
+    os.environ.setdefault("FONTCONFIG_FILE", "/etc/fonts/fonts.conf")
+    os.environ.setdefault("FONTCONFIG_PATH", "/etc/fonts")
+
+
 def select_ui_font(point_size: int = 13, weight: int = QFont.Normal) -> QFont:
     """
     Choose a UI font based on OS, using a priority list.
@@ -1621,7 +1629,6 @@ class InteractiveViewerWindow(BaseWindow):
             self.v_line.setPos(x)
             self.v_line.show()
             self.h_line.hide()
-            # data = img[:, x]
             data = np.asarray(img[:, x], dtype=np.float64)
             self.plot_widget.setTitle(f"Intensity at column: {x}")
         if not np.isfinite(data).all():
@@ -1652,6 +1659,7 @@ class InteractiveViewerWindow(BaseWindow):
             pass
 
     def save_current_image(self):
+        self.perform_update()
         if hasattr(self.parent_app, "set_active_viewer"):
             self.parent_app.set_active_viewer(self)
         self.parent_app.save_to_image()

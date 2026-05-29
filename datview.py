@@ -249,6 +249,14 @@ CINE_LOOKUP_TABLE = np.array([
 logger = logging.getLogger(APP_NAME)
 
 
+if platform.system() == "Linux":
+    for var in ("FONTCONFIG_FILE", "FONTCONFIG_PATH"):
+        if var in os.environ and not os.environ[var].strip():
+            del os.environ[var]
+    os.environ.setdefault("FONTCONFIG_FILE", "/etc/fonts/fonts.conf")
+    os.environ.setdefault("FONTCONFIG_PATH", "/etc/fonts")
+
+
 def select_ui_font(point_size: int = 13, weight: int = QFont.Normal) -> QFont:
     """
     Choose a UI font based on OS, using a priority list.
@@ -2351,6 +2359,7 @@ class InteractiveViewerWindow(BaseWindow):
             pass
 
     def save_current_image(self):
+        self.perform_update()
         if hasattr(self.parent_app, "set_active_viewer"):
             self.parent_app.set_active_viewer(self)
         self.parent_app.save_to_image()
@@ -3562,6 +3571,28 @@ class DatviewMainWindow(QMainWindow):
         self.active_viewer = viewer
         self.statusBar().showMessage(f"Active: {viewer.windowTitle()}")
 
+    def _get_save_start_path(self, default_ext: str):
+        """
+        Return a default save path based on the current active viewer file.
+        """
+        source_path = None
+
+        if self.active_viewer and hasattr(self.active_viewer, "file_path"):
+            source_path = self.active_viewer.file_path
+
+        if source_path:
+            source_path = os.path.normpath(source_path)
+
+            if os.path.isfile(source_path):
+                base_dir = os.path.dirname(source_path)
+                base_name = os.path.splitext(os.path.basename(source_path))[0]
+                return os.path.join(base_dir, base_name + default_ext)
+
+            if os.path.isdir(source_path):
+                return os.path.join(source_path, "output" + default_ext)
+
+        return os.path.join(os.getcwd(), "output" + default_ext)
+
     def save_to_image(self):
         if self.active_viewer and hasattr(self.active_viewer, 'viewer_state'):
             img = self.active_viewer.viewer_state.get("image")
@@ -3573,13 +3604,28 @@ class DatviewMainWindow(QMainWindow):
             QMessageBox.information(self, "Input needed",
                                     "No active image. Use Interactive-Viewer!")
             return
+        default_path = self._get_save_start_path(".tif")
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Image As",
+            default_path,
+            "TIFF (*.tif);;PNG (*.png);;JPEG (*.jpg)")
 
-        path, _ = QFileDialog.getSaveFileName(self,
-                                              "Save Image As", "",
-                                              "TIFF (*.tif);;PNG (*.png);;"
-                                              "JPEG (*.jpg)")
-        if path:
-            save_image(path, img)
+        if not path:
+            return
+
+        if not os.path.splitext(path)[1]:
+            if "PNG" in selected_filter:
+                path += ".png"
+            elif "JPEG" in selected_filter:
+                path += ".jpg"
+            else:
+                path += ".tif"
+
+        err = save_image(path, img)
+        if err:
+            QMessageBox.critical(self, "Save failed", err)
+        else:
             self.statusBar().showMessage(f"Image saved to: {path}")
 
     def save_to_table(self):
@@ -3603,11 +3649,20 @@ class DatviewMainWindow(QMainWindow):
                                     f"({MAX_TABLE_SAVE} elements).")
             return
 
-        path, _ = QFileDialog.getSaveFileName(self, "Save Data As", "",
-                                              "CSV (*.csv)")
+        default_path = self._get_save_start_path(".csv")
+
+        path, _ = QFileDialog.getSaveFileName(self, "Save Data As",
+                                              default_path, "CSV (*.csv)")
+
         if path:
-            save_table(path, data)
-            self.statusBar().showMessage(f"Data saved to: {path}")
+            if not os.path.splitext(path)[1]:
+                path += ".csv"
+
+            err = save_table(path, data)
+            if err:
+                QMessageBox.critical(self, "Save failed", err)
+            else:
+                self.statusBar().showMessage(f"Data saved to: {path}")
 
 
 display_msg = """

@@ -44,11 +44,11 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     command = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",
         "--name", EXE_NAME,
         "--noconsole",
         "--onedir",
-        f"--hidden-import=hdf5plugin",
+        "--hidden-import=hdf5plugin",
         f"--distpath={dist_path}",
         f"--workpath={build_path}",
         f"--specpath={spec_path}",
@@ -88,9 +88,8 @@ def main():
         print("--------------------------------------------------------------")
     except FileNotFoundError:
         print(f"\n--- Build FAILED! ---")
-        print("Error: 'pyinstaller' command not found.")
-        print("Please make sure PyInstaller is installed in your environment:\n")
-        print("pip install pyinstaller\n")
+        print("Error: Python executable not found.")
+        print("--------------------------------------------------------------")
         print("--------------------------------------------------------------")
         sys.exit(1)
 

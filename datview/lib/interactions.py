@@ -677,6 +677,28 @@ class DatviewInteraction(QObject):
         self.active_viewer = viewer
         self.main_win.statusBar().showMessage(f"Active: {viewer.windowTitle()}")
 
+    def _get_save_start_path(self, default_ext: str):
+        """
+        Return a default save path based on the current active viewer file.
+        """
+        source_path = None
+
+        if self.active_viewer and hasattr(self.active_viewer, "file_path"):
+            source_path = self.active_viewer.file_path
+
+        if source_path:
+            source_path = os.path.normpath(source_path)
+
+            if os.path.isfile(source_path):
+                base_dir = os.path.dirname(source_path)
+                base_name = os.path.splitext(os.path.basename(source_path))[0]
+                return os.path.join(base_dir, base_name + default_ext)
+
+            if os.path.isdir(source_path):
+                return os.path.join(source_path, "output" + default_ext)
+
+        return os.path.join(os.getcwd(), "output" + default_ext)
+
     def save_to_image(self):
         if self.active_viewer and hasattr(self.active_viewer, 'viewer_state'):
             img = self.active_viewer.viewer_state.get("image")
@@ -688,13 +710,28 @@ class DatviewInteraction(QObject):
             QMessageBox.information(self.main_win, "Input needed",
                                     "No active image. Use Interactive-Viewer!")
             return
+        default_path = self._get_save_start_path(".tif")
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self.main_win,
+            "Save Image As",
+            default_path,
+            "TIFF (*.tif);;PNG (*.png);;JPEG (*.jpg)")
 
-        path, _ = QFileDialog.getSaveFileName(self.main_win,
-                                              "Save Image As", "",
-                                              "TIFF (*.tif);;PNG (*.png);;"
-                                              "JPEG (*.jpg)")
-        if path:
-            util.save_image(path, img)
+        if not path:
+            return
+
+        if not os.path.splitext(path)[1]:
+            if "PNG" in selected_filter:
+                path += ".png"
+            elif "JPEG" in selected_filter:
+                path += ".jpg"
+            else:
+                path += ".tif"
+
+        err = util.save_image(path, img)
+        if err:
+            QMessageBox.critical(self, "Save failed", err)
+        else:
             self.main_win.statusBar().showMessage(f"Image saved to: {path}")
 
     def save_to_table(self):
@@ -718,11 +755,19 @@ class DatviewInteraction(QObject):
                                     f"({util.MAX_TABLE_SAVE} elements).")
             return
 
-        path, _ = QFileDialog.getSaveFileName(self.main_win, "Save Data As", "",
-                                              "CSV (*.csv)")
+        default_path = self._get_save_start_path(".csv")
+
+        path, _ = QFileDialog.getSaveFileName(self.main_win, "Save Data As",
+                                              default_path, "CSV (*.csv)")
+
         if path:
-            util.save_table(path, data)
-            self.main_win.statusBar().showMessage(f"Data saved to: {path}")
+            if not os.path.splitext(path)[1]:
+                path += ".csv"
+            err = util.save_table(path, data)
+            if err:
+                QMessageBox.critical(self, "Save failed", err)
+            else:
+                self.main_win.statusBar().showMessage(f"Data saved to: {path}")
 
     def _show_window(self, win):
         self.viewers.append(win)
