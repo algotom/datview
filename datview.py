@@ -6,6 +6,7 @@ Users can copy this file and run it as:
     python datview.py
 
 Dependencies: h5py, Pillow, pyqtgraph, PySide6. Optional: hdf5plugin
+Version: 2.1.0
 """
 
 import re
@@ -34,7 +35,7 @@ from PySide6.QtCore import (Qt, QTimer, Signal, QAbstractTableModel,
 from PySide6.QtGui import (QFont, QColor, QTextCursor, QTextOption, QIcon,
                            QTextDocument, QPainter, QFontMetrics,
                            QSyntaxHighlighter, QTextCharFormat, QFontDatabase,
-                           QCursor)
+                           QCursor, QPalette, QIntValidator)
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QGridLayout, QLabel, QPushButton,
@@ -53,11 +54,10 @@ except ImportError:
                   "Compressed HDF5 datasets may not load correctly.",
                   RuntimeWarning)
 
-
 pg.setConfigOptions(antialias=True, imageAxisOrder='row-major', background='w',
                     foreground='k')
 APP_NAME = "DatView"
-FONT_SIZE = 13
+FONT_SIZE = 14
 FONT_WEIGHT = "normal"
 MAIN_WIN_RATIO = 0.8
 TEXT_WIN_RATIO = 0.7
@@ -72,17 +72,17 @@ SCROLL_SENSITIVITY = 1
 
 UI_MARGIN_XS = 2
 UI_MARGIN_S = 4
-UI_MARGIN_M = 8
+UI_MARGIN_M = 6
 UI_MARGIN_L = 10
 UI_SPACING_S = 2
 UI_SPACING_M = 4
 UI_SPACING_L = 8
 
-BTN_H = 35
+BTN_H = 32
 HIST_MIN_W = 130
 HIST_MAX_W = 200
-TREE_MIN_W = 280
-TABLE_ROW_H = 25
+TREE_MIN_W = 270
+TABLE_ROW_H = 24
 
 # Data display logic constants
 HIST_NUM_BINS = 256
@@ -101,52 +101,368 @@ HDF_EXT = (".nxs", ".nx", ".h5", ".hdf", ".hdf5")
 TEXT_EXT = (".json", ".out", ".err", ".txt", ".yaml")
 CINE_EXT = ".cine"
 
-THEME_QSS = f"""
+# ---------------------------------------------------------------------------
+# Colour palettes  (keys shared by Light and Dark)
+# ---------------------------------------------------------------------------
+DARK = {
+    "BG": "#1a1d23",
+    "SURFACE": "#504d4d",
+    "SURFACE2": "#2a2f3a",
+    "BORDER": "#3a3f4e",
+    "BORDER_HI": "#4d9fff",
+    "ACCENT": "#4d9fff",
+    "ACCENT_HOV": "#6ab0ff",
+    "ACCENT_PRE": "#3a7fd4",
+    "TEXT": "#d0d5e0",
+    "TEXT_DIM": "#7a8099",
+    "TEXT_HEAD": "#ffffff",
+    "SEL_BG": "#2d4d7a",
+    "SEL_FG": "#ffffff",
+    "BTN_BG": "#2e3340",
+    "BTN_HOV": "#374058",
+    "BTN_PRE": "#1e2a40",
+    "SCROLL": "#3a3f4e",
+    "SCROLL_HOV": "#4d9fff",
+    "STATUS_BG": "#181b20",
+    "ALT_ROW": "#1e2230",
+    "PG_BG": "#1e2128",
+    "PG_FG": "#c8cdd6",
+    "LN_BG": "#1a1d23",
+    "LN_FG": "#4d5470",
+}
+
+LIGHT = {
+    "BG": "#f4f6f9",
+    "SURFACE": "#c2c2c2",
+    "SURFACE2": "#eef1f6",
+    "BORDER": "#cdd2dc",
+    "BORDER_HI": "#2563eb",
+    "ACCENT": "#2563eb",
+    "ACCENT_HOV": "#3b82f6",
+    "ACCENT_PRE": "#1d4ed8",
+    "TEXT": "#1e2333",
+    "TEXT_DIM": "#6b7280",
+    "TEXT_HEAD": "#0f172a",
+    "SEL_BG": "#dbeafe",
+    "SEL_FG": "#1e3a5f",
+    "BTN_BG": "#ffffff",
+    "BTN_HOV": "#eff6ff",
+    "BTN_PRE": "#dbeafe",
+    "SCROLL": "#c5cbd8",
+    "SCROLL_HOV": "#2563eb",
+    "STATUS_BG": "#e8eaf0",
+    "ALT_ROW": "#f8fafc",
+    "PG_BG": "w",
+    "PG_FG": "k",
+    "LN_BG": "#eef1f6",
+    "LN_FG": "#9ca3af",
+}
+
+THEMES = {"Light": LIGHT, "Dark": DARK}
+
+# Active palette – mutated at runtime by apply_theme(); starts as Light
+sel_theme = dict(LIGHT)
+
+
+def build_qss(c: dict) -> str:
+    """Generate the full application QSS from a colour-palette dict."""
+    fs = FONT_SIZE
+    return f"""
+    /* ── Global ── */
     QWidget {{
-        font-size: {FONT_SIZE}px;
+        font-size: {fs}px;
+        color: {c['TEXT']};
+        background-color: {c['BG']};
     }}
+    QMainWindow {{
+        background-color: {c['BG']};
+    }}
+
+    /* ── Group Boxes ── */
     QGroupBox {{
-        border: 1px solid rgba(128, 128, 128, 60);
-        border-radius: 6px;
-        margin-top: 10px;
-    }}
+    border: 1px solid {c['BORDER']};
+    border-radius: 3px;
+    margin-top: 8px;
+    margin-bottom: 0px;
+    padding: 4px 4px 4px 4px;
+    background-color: {c['BG']};
+    }}    
     QGroupBox::title {{
         subcontrol-origin: margin;
-        left: 10px;
-        padding: 0 6px;
+        subcontrol-position: top left;
+        left: 6px;
+        top: 0px;
+        padding: 0 5px;
+        color: {c['TEXT_DIM']};
+        background-color: {c['BG']};
+        font-size: {fs - 1}px;
+        font-weight: 500;
     }}
+    QLabel#PathDisplayLabel {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        padding: 4px 8px;
+    }}
+
+    /* ── Frames ── */
     QFrame {{
-        border-radius: 6px;
+        border-radius: 2px;
+        background-color: transparent;
     }}
+
+    /* ── Push Buttons ── */
     QPushButton {{
-        background-color: #ffffff;
-        border: 1px solid #d0d0d0;
-        border-radius: 6px;
-        padding: 6px 14px;
+        background-color: {c['BTN_BG']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        padding: 5px 5px;
+        font-weight: 500;
     }}
     QPushButton:hover {{
-        background-color: #f5f8ff;
-        border: 1px solid #3d84ff;
+        background-color: {c['BTN_HOV']};
+        border: 1px solid {c['BORDER_HI']};
+        color: {c['TEXT_HEAD']};
     }}
     QPushButton:pressed {{
-        background-color: #eaf1ff;
+        background-color: {c['BTN_PRE']};
+        border: 1px solid {c['ACCENT_PRE']};
     }}
     QPushButton:disabled {{
-        background-color: #f5f5f5;
-        border: 1px solid #dddddd;
-        color: #9a9a9a;
+        background-color: {c['SURFACE']};
+        border: 1px solid {c['BORDER']};
+        color: {c['TEXT_DIM']};
     }}
-    QPushButton:disabled {{
-        opacity: 0.5;
+
+    /* ── Named-widget overrides ── */
+    QLabel#HeaderDimLabel {{
+        color: {c['TEXT_DIM']};
+        font-size: {fs}px;
+        background-color: transparent;
     }}
-    QComboBox, QListWidget, QTreeWidget, QTextEdit, QPlainTextEdit, QLineEdit {{
-        border: 1px solid rgba(128, 128, 128, 60);
-        border-radius: 6px;
-        padding: 6px;
+    QLabel#HeaderPathLabel {{
+        color: {c['TEXT']};
+        font-weight: 500;
+        background-color: transparent;
     }}
+    QPushButton#AccentOutlineBtn {{
+        color: {c['ACCENT']};
+        border: 1px solid {c['ACCENT']};
+        font-weight: 600;
+    }}
+    QPushButton#AccentOutlineBtn:hover {{
+        background-color: {c['BTN_HOV']};
+        border: 1px solid {c['ACCENT_HOV']};
+        color: {c['ACCENT_HOV']};
+    }}
+   
+    /* ── Line Edits ── */
+    QLineEdit {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        padding: 4px 8px;
+        selection-background-color: {c['SEL_BG']};
+        selection-color: {c['SEL_FG']};
+    }}
+    QLineEdit:focus {{
+        border: 1px solid {c['ACCENT']};
+    }}
+
+    /* ── Combo Boxes ── */
+    QComboBox {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        padding: 5px 5px;
+        min-width: 80px;
+    }}
+    QComboBox:hover {{
+        border: 1px solid {c['BORDER_HI']};
+    }}
+    QComboBox::drop-down {{
+        border: none;
+        width: 22px;
+    }}
+    QComboBox::down-arrow {{
+        width: 10px;
+        height: 10px;
+    }}
+    QComboBox QAbstractItemView {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        selection-background-color: {c['SEL_BG']};
+        selection-color: {c['SEL_FG']};
+    }}
+
+    /* ── List / Tree Widgets ── */
+    QListWidget, QTreeWidget {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        padding: 2px;
+        alternate-background-color: {c['ALT_ROW']};
+        outline: none;
+    }}
+    QListWidget::item, QTreeWidget::item {{
+        padding: 3px 4px;
+        border-radius: 2px;
+    }}
+    QListWidget::item:selected, QTreeWidget::item:selected {{
+        background-color: {c['SEL_BG']};
+        color: {c['SEL_FG']};
+    }}
+    QListWidget::item:hover, QTreeWidget::item:hover {{
+        background-color: {c['BTN_HOV']};
+    }}
+    QHeaderView::section {{
+        background-color: {c['SURFACE']};
+        color: {c['TEXT_DIM']};
+        border: none;
+        border-bottom: 1px solid {c['BORDER']};
+        padding: 4px 8px;
+        font-weight: 500;
+    }}
+    QHeaderView::section:hover {{
+        background-color: {c['BTN_HOV']};
+    }}
+
+    /* ── Text Edit / Plain Text ── */
+    QTextEdit, QPlainTextEdit {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        padding: 4px;
+        selection-background-color: {c['SEL_BG']};
+        selection-color: {c['SEL_FG']};
+    }}
+
+    /* ── Table View / Widget ── */
+    QTableView, QTableWidget {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        gridline-color: {c['BORDER']};
+        alternate-background-color: {c['ALT_ROW']};
+        outline: none;
+        selection-background-color: {c['SEL_BG']};
+        selection-color: {c['SEL_FG']};
+    }}
+    QTableView::item, QTableWidget::item {{
+        padding: 2px 6px;
+    }}
+
+    /* ── Sliders ── */
+    QSlider::groove:horizontal {{
+        height: 4px;
+        background: {c['BORDER']};
+        border-radius: 2px;
+    }}
+    QSlider::handle:horizontal {{
+        background: {c['ACCENT']};
+        border: none;
+        width: 14px;
+        height: 14px;
+        margin: -5px 0;
+        border-radius: 2px;
+    }}
+    QSlider::handle:horizontal:hover {{
+        background: {c['ACCENT_HOV']};
+    }}
+    QSlider::sub-page:horizontal {{
+        background: {c['ACCENT']};
+        border-radius: 2px;
+    }}
+
+    /* ── Check Boxes & Radio Buttons ── */
+    QCheckBox, QRadioButton {{
+        color: {c['TEXT']};
+        spacing: 6px;
+        background-color: transparent;
+    }}
+    QCheckBox::indicator, QRadioButton::indicator {{
+        width: 14px;
+        height: 14px;
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        background-color: {c['SURFACE2']};
+    }}
+    QRadioButton::indicator {{
+        border-radius: 2px;
+    }}
+    QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
+        background-color: {c['ACCENT']};
+        border: 1px solid {c['ACCENT']};
+    }}
+
+    /* ── Labels ── */
+    QLabel {{
+        background-color: transparent;
+        color: {c['TEXT']};
+    }}
+
+    /* ── Splitter ── */
+    QSplitter::handle {{
+        background: {c['BORDER']};
+        margin: 1px;
+    }}
+    QSplitter::handle:horizontal {{
+        width: 2px;
+    }}
+    QSplitter::handle:vertical {{
+        height: 2px;
+    }}
+
+    /* ── Scrollbars ── */
+    QScrollBar:vertical {{
+        background: {c['SURFACE']};
+        width: 8px;
+        border-radius: 2px;
+        margin: 0;
+    }}
+    QScrollBar::handle:vertical {{
+        background: {c['SCROLL']};
+        border-radius: 2px;
+        min-height: 28px;
+    }}
+    QScrollBar::handle:vertical:hover {{
+        background: {c['SCROLL_HOV']};
+    }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+        height: 0;
+    }}
+    QScrollBar:horizontal {{
+        background: {c['SURFACE']};
+        height: 8px;
+        border-radius: 2px;
+        margin: 0;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {c['SCROLL']};
+        border-radius: 2px;
+        min-width: 28px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background: {c['SCROLL_HOV']};
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0;
+    }}
+
+    /* ── Status Bar ── */
     QStatusBar {{
-        border-top: 1px solid rgba(128,128,128,60);
-        padding: 10px 10px;
+        background-color: {c['STATUS_BG']};
+        border-top: 1px solid {c['BORDER']};
+        color: {c['TEXT_DIM']};
+        padding: 5px 5px 5px 5px;
     }}
     QStatusBar::item {{
         border: none;
@@ -155,11 +471,45 @@ THEME_QSS = f"""
         border: none;
         padding: 0px 5px 8px 5px;
         margin-left: 5px;
+        color: {c['ACCENT']};
+        font-size: {fs - 1}px;
     }}
-    QSplitter::handle {{
-        background: rgba(128, 128, 128, 40);
+
+    /* ── Tooltip ── */
+    QToolTip {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER_HI']};
+        padding: 4px 8px;
+        border-radius: 2px;
+    }}
+
+    /* ── Menu ── */
+    QMenu {{
+        background-color: {c['SURFACE2']};
+        color: {c['TEXT']};
+        border: 1px solid {c['BORDER']};
+        border-radius: 2px;
+        padding: 4px;
+    }}
+    QMenu::item {{
+        padding: 5px 28px;
+        border-radius: 2px;
+    }}
+    QMenu::item:selected {{
+        background-color: {c['SEL_BG']};
+        color: {c['SEL_FG']};
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background: {c['BORDER']};
+        margin: 4px 8px;
+    }}
+    QMenu::item:disabled {{
+        color: {c['TEXT_DIM']};
     }}
 """
+
 
 CINE_LOOKUP_TABLE = np.array([
     2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 17, 18, 19, 20, 21,
@@ -698,10 +1048,10 @@ def _get_cropped_slice(file_type, data_obj, index, axis, crop_rect):
         else:
             if axis == 0:
                 mat_cropped = data_obj[0][index, y_start:y_stop,
-                                          x_start:x_stop]
+                              x_start:x_stop]
             else:
                 mat_cropped = data_obj[0][y_start:y_stop, index,
-                                          x_start:x_stop]
+                              x_start:x_stop]
         if mat_cropped.size == 0:
             raise ValueError("Crop parameters result in an empty image.")
         return mat_cropped
@@ -868,11 +1218,46 @@ def load_config():
 # ==============================================================================
 
 
-def apply_app_theme(app: QApplication):
+def apply_theme(app: QApplication, theme_name: str = "Light"):
+    """Apply a named theme ("Light" or "Dark") to the application."""
+    global sel_theme
+    sel_theme = dict(THEMES.get(theme_name, LIGHT))
+    # Update pyqtgraph global defaults
+    pg.setConfigOptions(background=sel_theme["PG_BG"],
+                        foreground=sel_theme["PG_FG"])
+    # Build and apply Qt palette
     app.setStyle("Fusion")
-    pal = app.style().standardPalette()
+    pal = QPalette()
+    pal.setColor(QPalette.Window, QColor(sel_theme["BG"]))
+    pal.setColor(QPalette.WindowText, QColor(sel_theme["TEXT"]))
+    pal.setColor(QPalette.Base, QColor(sel_theme["SURFACE2"]))
+    pal.setColor(QPalette.AlternateBase, QColor(sel_theme["ALT_ROW"]))
+    pal.setColor(QPalette.Text, QColor(sel_theme["TEXT"]))
+    pal.setColor(QPalette.BrightText, QColor(sel_theme["TEXT_HEAD"]))
+    pal.setColor(QPalette.Button, QColor(sel_theme["BTN_BG"]))
+    pal.setColor(QPalette.ButtonText, QColor(sel_theme["TEXT"]))
+    pal.setColor(QPalette.Highlight, QColor(sel_theme["SEL_BG"]))
+    pal.setColor(QPalette.HighlightedText, QColor(sel_theme["SEL_FG"]))
+    pal.setColor(QPalette.Link, QColor(sel_theme["ACCENT"]))
+    pal.setColor(QPalette.LinkVisited, QColor(sel_theme["ACCENT_HOV"]))
+    pal.setColor(QPalette.ToolTipBase, QColor(sel_theme["SURFACE2"]))
+    pal.setColor(QPalette.ToolTipText, QColor(sel_theme["TEXT"]))
+    pal.setColor(QPalette.Disabled, QPalette.WindowText,
+                 QColor(sel_theme["TEXT_DIM"]))
+    pal.setColor(QPalette.Disabled, QPalette.Text,
+                 QColor(sel_theme["TEXT_DIM"]))
+    pal.setColor(QPalette.Disabled, QPalette.ButtonText,
+                 QColor(sel_theme["TEXT_DIM"]))
+    pal.setColor(QPalette.Disabled, QPalette.Button,
+                 QColor(sel_theme["SURFACE"]))
+    pal.setColor(QPalette.Disabled, QPalette.Base, QColor(sel_theme["SURFACE"]))
     app.setPalette(pal)
-    app.setStyleSheet(THEME_QSS)
+    app.setStyleSheet(build_qss(sel_theme))
+
+
+# Keep old name as alias so nothing else breaks
+def apply_app_theme(app: QApplication):
+    apply_theme(app, "Light")
 
 
 class BaseWindow(QWidget):
@@ -901,7 +1286,7 @@ class HDFViewerWindow(BaseWindow):
         main = QVBoxLayout(self)
         m_val = 4
         main.setContentsMargins(m_val, m_val, m_val, m_val)
-        main.setSpacing(2)
+        main.setSpacing(4)
         # --- Splitter
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setChildrenCollapsible(False)
@@ -909,7 +1294,7 @@ class HDFViewerWindow(BaseWindow):
         # ===== Left Pane: Tree (inside a padded frame) =====
         left_frame = QFrame()
         left_layout = QVBoxLayout(left_frame)
-        left_layout.setContentsMargins(m_val, m_val, m_val, m_val)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
 
         self.tree_widget = QTreeWidget()
@@ -925,7 +1310,7 @@ class HDFViewerWindow(BaseWindow):
         # ===== Right Pane: Info (inside a padded frame) =====
         right_frame = QFrame()
         right_layout = QVBoxLayout(right_frame)
-        right_layout.setContentsMargins(m_val, m_val, m_val, m_val)
+        right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
         title = QLabel("Brief Information")
@@ -1003,6 +1388,7 @@ class HDFViewerWindow(BaseWindow):
 
 class PlotWindow1D(BaseWindow):
     """Window for 1D plots using pyqtgraph"""
+
     def __init__(self, parent=None, title="", data_x=None, data_y=None,
                  plot_type="plot", help_text="", ratio=PLT_WIN_1D_RATIO):
         super().__init__(parent, title, ratio)
@@ -1082,16 +1468,16 @@ class MiniHighlighter(QSyntaxHighlighter):
     def __init__(self, document, mode: str):
         super().__init__(document)
         self.mode = mode.lower()
-        self.f_comment = _fmt("#888888", italic=True)
-        self.f_string = _fmt("#008000")
-        self.f_number = _fmt("#AA00AA")
-        self.f_kw = _fmt("#0033CC", bold=True)
-        self.f_key = _fmt("#0033CC", bold=True)  # yaml/json keys
-        self.f_bool = _fmt("#AA5500", bold=True)
+        self.f_comment = _fmt("#6a7090", italic=True)
+        self.f_string = _fmt("#7ec880")
+        self.f_number = _fmt("#d19aff")
+        self.f_kw = _fmt("#6ab0ff", bold=True)
+        self.f_key = _fmt("#6ab0ff", bold=True)  # yaml/json keys
+        self.f_bool = _fmt("#ffb86c", bold=True)
 
-        self.f_err = _fmt("#CC0000", bold=True)
-        self.f_warn = _fmt("#CC7A00", bold=True)
-        self.f_info = _fmt("#0066CC", bold=True)
+        self.f_err = _fmt("#ff5555", bold=True)
+        self.f_warn = _fmt("#ffb86c", bold=True)
+        self.f_info = _fmt("#8be9fd", bold=True)
 
         self._re_num = re.compile(r"\b\d+(\.\d+)?([eE][+-]?\d+)?\b")
 
@@ -1283,8 +1669,8 @@ class CodeEditor(QPlainTextEdit):
 
     def line_number_area_paint_event(self, event):
         painter = QPainter(self._ln_area)
-        painter.fillRect(event.rect(),
-                         self.palette().color(self.backgroundRole()))
+        # Use theme-aware line-number gutter colors
+        painter.fillRect(event.rect(), QColor(sel_theme["LN_BG"]))
 
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
@@ -1296,7 +1682,7 @@ class CodeEditor(QPlainTextEdit):
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 number = str(block_number + 1)
-                painter.setPen(self.palette().color(self.foregroundRole()))
+                painter.setPen(QColor(sel_theme["LN_FG"]))
                 painter.drawText(0, top, self._ln_area.width() - 4,
                                  fm.height(), Qt.AlignRight, number)
             block = block.next()
@@ -1322,7 +1708,7 @@ class TextViewerWindow(BaseWindow):
         # toolbar: find + wrap toggle + open
         tb = QWidget()
         tb_l = QHBoxLayout(tb)
-        tb_l.setContentsMargins(m_val, m_val, m_val, m_val)
+        tb_l.setContentsMargins(0, 0, 0, 0)
         tb_l.setSpacing(4)
 
         self.find_edit = QLineEdit()
@@ -1502,7 +1888,7 @@ class TableViewerWindow(BaseWindow):
         line_hei = 30
         layout = QVBoxLayout(self)
         layout.setContentsMargins(m_val, m_val, m_val, m_val)
-        layout.setSpacing(4)
+        layout.setSpacing(m_val)
 
         # Toolbar row
         bar = QWidget()
@@ -1515,11 +1901,13 @@ class TableViewerWindow(BaseWindow):
         self.edt_find.setPlaceholderText("Find…")
         self.edt_find.setFixedHeight(line_hei)
 
-        self.btn_copy = QPushButton("Copy selection")
+        self.btn_copy = QPushButton("Copy Selection")
         self.btn_copy.setFixedHeight(line_hei)
+        self.btn_copy.setFixedWidth(100)
 
         self.btn_save = QPushButton("Save CSV")
         self.btn_save.setFixedHeight(line_hei)
+        self.btn_save.setFixedWidth(100)
 
         self.lbl_info = QLabel("")
         self.lbl_info.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -1703,8 +2091,9 @@ class Viewer2DWindow(BaseWindow):
         self.imv.ui.menuBtn.hide()
         self.imv.view.setDefaultPadding(0)
 
-        # Set bright-grey background for Histogram handles (triangles)
-        self.imv.getHistogramWidget().setBackground(pg.mkColor(220, 220, 220))
+        # Set histogram background to match active theme surface
+        self.imv.getHistogramWidget().setBackground(
+            pg.mkColor(sel_theme["SURFACE"]))
 
         self.imv.setImage(self.image)
         self.imv.view.autoRange(padding=0)
@@ -1730,7 +2119,7 @@ class Viewer2DWindow(BaseWindow):
         self.btn_perc.clicked.connect(self.open_percentile)
 
         self.lbl_aspect = QLabel("Aspect")
-        self.lbl_aspect.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.lbl_aspect.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
 
         self.combo_aspect = QComboBox()
         self.combo_aspect.addItems(["equal", "auto"])
@@ -1746,6 +2135,7 @@ class Viewer2DWindow(BaseWindow):
             b.setFixedWidth(max_w)
 
         self.combo_aspect.setFixedHeight(BTN_H)
+        self.combo_aspect.setFixedWidth(max_w)
 
         row.addWidget(self.btn_reset)
         row.addWidget(self.btn_stats)
@@ -1962,12 +2352,12 @@ class InteractiveViewerWindow(BaseWindow):
         self.imv.ui.gridLayout.setSpacing(UI_SPACING_M)
         self.imv.view.setDefaultPadding(0)
 
-        # --- Darker histogram/LUT background so white triangles are visible ---
+        # --- Histogram background matches active theme ---
         hist_w = self.imv.getHistogramWidget()
         hist_w.setMinimumWidth(HIST_MIN_W)
         hist_w.setMaximumWidth(HIST_MAX_W)
         hist_w.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        hist_w.setBackground(pg.mkColor(215, 215, 215))
+        hist_w.setBackground(pg.mkColor(sel_theme["SURFACE"]))
 
         # Profile plot
         self.plot_widget = pg.PlotWidget(title="Line Profile")
@@ -2026,8 +2416,11 @@ class InteractiveViewerWindow(BaseWindow):
             self.slider0.setFixedHeight(20)
             c_layout.addWidget(self.slider0, 0, 1, alignment=Qt.AlignVCenter)
 
-            self.lbl_slice0 = QLabel("0")
-            self.lbl_slice0.setFixedWidth(40)
+            self.lbl_slice0 = QLineEdit("0")
+            # self.lbl_slice0.setFixedWidth(65)
+            self.lbl_slice0.setAlignment(Qt.AlignCenter)
+            self.lbl_slice0.setValidator(QIntValidator(0, self.depth - 1, self.lbl_slice0))
+            self.lbl_slice0.editingFinished.connect(self.on_slice0_input_changed)
             c_layout.addWidget(self.lbl_slice0, 0, 2, alignment=Qt.AlignVCenter)
         else:
             c_layout.addWidget(QWidget(), 0, 0, 1, 3)
@@ -2045,10 +2438,11 @@ class InteractiveViewerWindow(BaseWindow):
         c_layout.addWidget(self.btn_save_img, 0, 5, alignment=Qt.AlignVCenter)
 
         self.lbl_aspect = QLabel("Aspect")
-        self.lbl_aspect.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.lbl_aspect.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         c_layout.addWidget(self.lbl_aspect, 0, 6)
 
         # Row 1
+        self.lbl_slice1 = None
         if self.file_type == "hdf" and self.height > 1 and self.depth > 1:
             self.radio_axis1 = QRadioButton("Axis 1")
             self.radio_axis1.toggled.connect(
@@ -2063,8 +2457,12 @@ class InteractiveViewerWindow(BaseWindow):
             self.slider1.setFixedHeight(20)
             c_layout.addWidget(self.slider1, 1, 1, alignment=Qt.AlignVCenter)
 
-            self.lbl_slice1 = QLabel("0")
-            self.lbl_slice1.setFixedWidth(40)
+            self.lbl_slice1 = QLineEdit("0")
+            self.lbl_slice1.setAlignment(Qt.AlignCenter)
+            self.lbl_slice1.setValidator(QIntValidator(0, self.height - 1,
+                                                       self.lbl_slice1))
+            self.lbl_slice1.setEnabled(False)
+            self.lbl_slice1.editingFinished.connect(self.on_slice1_input_changed)
             c_layout.addWidget(self.lbl_slice1, 1, 2, alignment=Qt.AlignVCenter)
         else:
             c_layout.addWidget(QWidget(), 1, 0, 1, 3)
@@ -2090,11 +2488,18 @@ class InteractiveViewerWindow(BaseWindow):
         # --- Make buttons same width/height ---
         buttons_equal = [self.btn_reset, self.btn_stats, self.btn_save_img,
                          self.btn_hist, self.btn_perc, self.btn_save_tbl]
-        for b in buttons_equal:
-            b.setFixedHeight(BTN_H)
         max_w = max(b.sizeHint().width() for b in buttons_equal)
         for b in buttons_equal:
             b.setFixedWidth(max_w)
+            b.setFixedHeight(BTN_H)
+
+        self.lbl_aspect.setFixedWidth(max_w)
+        self.lbl_aspect.setFixedHeight(BTN_H)
+        self.combo_aspect.setFixedWidth(max_w)
+        self.lbl_slice0.setFixedWidth(max_w)
+        if self.lbl_slice1 is not None:
+            self.lbl_slice1.setFixedWidth(max_w)
+
         # keep slider column expanding
         c_layout.setColumnStretch(1, 1)
         main_layout.addWidget(controls, 0)
@@ -2176,6 +2581,36 @@ class InteractiveViewerWindow(BaseWindow):
             self.lbl_slice1.setText(str(value))
         self.update_timer.start()
 
+    def on_slice0_input_changed(self):
+        text = self.lbl_slice0.text().strip()
+        if not text:
+            self.lbl_slice0.setText(str(self.slider0.value()))
+            return
+        try:
+            val = int(text)
+            val = max(0, min(self.depth - 1, val))
+            self.lbl_slice0.setText(str(val))
+            if self.slider0.value() != val:
+                self.slider0.setValue(val)
+        except ValueError:
+            self.lbl_slice0.setText(str(self.slider0.value()))
+
+    def on_slice1_input_changed(self):
+        if not hasattr(self, 'slider1'):
+            return
+        text = self.lbl_slice1.text().strip()
+        if not text:
+            self.lbl_slice1.setText(str(self.slider1.value()))
+            return
+        try:
+            val = int(text)
+            val = max(0, min(self.height - 1, val))
+            self.lbl_slice1.setText(str(val))
+            if self.slider1.value() != val:
+                self.slider1.setValue(val)
+        except ValueError:
+            self.lbl_slice1.setText(str(self.slider1.value()))
+
     def perform_update(self):
         axis = self.viewer_state["axis"]
         index = self.slider0.value() if axis == 0 else self.slider1.value()
@@ -2238,12 +2673,16 @@ class InteractiveViewerWindow(BaseWindow):
         self.viewer_state["axis"] = axis_idx
         if axis_idx == 0:
             self.slider0.setEnabled(True)
+            self.lbl_slice0.setEnabled(True)
             if hasattr(self, 'slider1'):
                 self.slider1.setEnabled(False)
+                self.lbl_slice1.setEnabled(False)
         else:
             self.slider0.setEnabled(False)
+            self.lbl_slice0.setEnabled(False)
             if hasattr(self, 'slider1'):
                 self.slider1.setEnabled(True)
+                self.lbl_slice1.setEnabled(True)
 
         self.clear_profile()
         self.perform_update()
@@ -2445,7 +2884,18 @@ class ExportDialog(BaseWindow):
                  shape=None):
         super().__init__(None, f"Export TIF: {os.path.basename(file_path)}",
                          0.5)
-        self.input_width = 80
+        self.input_width = 120
+        self.combo_width = 120
+        self.button_width = 120
+        self.export_width = 120
+
+        self.outer_margin = 8
+        self.group_margin_left = 3
+        self.group_margin_top = 6
+        self.group_margin_right = 3
+        self.group_margin_bottom = 3
+        self.h_space = 6
+        self.v_space = 6
         self.parent_app = parent_app
         self.file_path = file_path
         self.file_type = file_type  # "hdf" | "cine"
@@ -2453,140 +2903,177 @@ class ExportDialog(BaseWindow):
         self.shape = tuple(shape) if shape else (0, 0, 0)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(UI_MARGIN_S, UI_MARGIN_S, UI_MARGIN_S,
-                                  UI_MARGIN_S)
-        layout.setSpacing(UI_SPACING_L)
+        layout.setContentsMargins(self.outer_margin, self.outer_margin,
+                                  self.outer_margin, self.outer_margin)
+        layout.setSpacing(5)
 
         # ---------------- Destination ----------------
         grp_dest = QGroupBox("Destination")
         gl_dest = QGridLayout(grp_dest)
-        gl_dest.setContentsMargins(UI_MARGIN_S, UI_MARGIN_S, UI_MARGIN_S,
-                                   UI_MARGIN_S)
-        gl_dest.setHorizontalSpacing(UI_SPACING_S)
-        gl_dest.setVerticalSpacing(UI_SPACING_S)
+        gl_dest.setContentsMargins(self.group_margin_left,
+                                   self.group_margin_top,
+                                   self.group_margin_right,
+                                   self.group_margin_bottom)
+        gl_dest.setHorizontalSpacing(self.h_space)
+        gl_dest.setVerticalSpacing(self.v_space)
 
         self.txt_path = QLabel("No folder selected...")
-        self.txt_path.setFrameStyle(QFrame.StyledPanel | QFrame.Sunken)
+        self.txt_path.setObjectName("PathDisplayLabel")
+        self.txt_path.setMinimumHeight(BTN_H)
+        self.txt_path.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        btn_browse = QPushButton("Browse base folder")
+        btn_browse = QPushButton("Browse Folder")
+        btn_browse.setFixedWidth(self.button_width)
+        btn_browse.setFixedHeight(BTN_H)
         btn_browse.clicked.connect(self.browse_folder)
 
         self.edt_subfolder = QLineEdit("tifs")
-        btn_mkdir = QPushButton("Make subfolder")
+        self.edt_subfolder.setFixedHeight(BTN_H)
+
+        btn_mkdir = QPushButton("Make Subfolder")
+        btn_mkdir.setFixedWidth(self.button_width)
+        btn_mkdir.setFixedHeight(BTN_H)
         btn_mkdir.clicked.connect(self.make_subfolder)
 
         gl_dest.addWidget(self.txt_path, 0, 0)
         gl_dest.addWidget(btn_browse, 0, 1)
         gl_dest.addWidget(self.edt_subfolder, 1, 0)
         gl_dest.addWidget(btn_mkdir, 1, 1)
-
+        gl_dest.setColumnStretch(0, 1)
+        gl_dest.setColumnStretch(1, 0)
         layout.addWidget(grp_dest)
 
         # ---------------- Slicing ----------------
         grp_slice = QGroupBox("Slicing")
         gl_slice = QGridLayout(grp_slice)
-        gl_slice.setContentsMargins(UI_MARGIN_S, UI_MARGIN_S, UI_MARGIN_S,
-                                    UI_MARGIN_S)
-        gl_slice.setHorizontalSpacing(UI_SPACING_S)
-        gl_slice.setVerticalSpacing(UI_SPACING_S)
+        gl_slice.setContentsMargins(self.group_margin_left,
+                                    self.group_margin_top,
+                                    self.group_margin_right,
+                                    self.group_margin_bottom)
+        gl_slice.setHorizontalSpacing(self.h_space)
+        gl_slice.setVerticalSpacing(self.v_space)
 
         self.combo_axis = QComboBox()
         self.combo_axis.addItems(["Axis 0", "Axis 1"])
+        self.combo_axis.setFixedWidth(self.combo_width)
+        self.combo_axis.setFixedHeight(BTN_H)
         if file_type == "cine":
             self.combo_axis.setEnabled(False)
 
+        self.edt_start = QLineEdit("0")
+        self.edt_stop = QLineEdit("-1")
+        self.edt_step = QLineEdit("1")
+
         gl_slice.addWidget(QLabel("Export along:"), 0, 0)
         gl_slice.addWidget(self.combo_axis, 0, 1)
-
         gl_slice.addWidget(QLabel("Start:"), 1, 0)
-        self.edt_start = QLineEdit("0")
-        gl_slice.addWidget(self.edt_start, 1, 1, alignment=Qt.AlignLeft)
-
+        gl_slice.addWidget(self.edt_start, 1, 1)
         gl_slice.addWidget(QLabel("Stop (-1=End):"), 1, 2)
-        self.edt_stop = QLineEdit("-1")
-        gl_slice.addWidget(self.edt_stop, 1, 3, alignment=Qt.AlignLeft)
-
+        gl_slice.addWidget(self.edt_stop, 1, 3)
         gl_slice.addWidget(QLabel("Step:"), 1, 4)
-        self.edt_step = QLineEdit("1")
-        gl_slice.addWidget(self.edt_step, 1, 5, alignment=Qt.AlignLeft)
+        gl_slice.addWidget(self.edt_step, 1, 5)
+
+        gl_slice.setColumnStretch(0, 0)
+        gl_slice.setColumnStretch(1, 0)
+        gl_slice.setColumnStretch(2, 0)
+        gl_slice.setColumnStretch(3, 0)
+        gl_slice.setColumnStretch(4, 0)
+        gl_slice.setColumnStretch(5, 0)
+        gl_slice.setColumnStretch(6, 1)
+
         layout.addWidget(grp_slice)
 
         # ---------------- Cropping ----------------
         grp_crop = QGroupBox("Cropping")
         gl_crop = QGridLayout(grp_crop)
-        gl_crop.setContentsMargins(UI_MARGIN_S, UI_MARGIN_S, UI_MARGIN_S,
-                                   UI_MARGIN_S)
-        gl_crop.setHorizontalSpacing(UI_SPACING_S)
-        gl_crop.setVerticalSpacing(UI_SPACING_S)
+        gl_crop.setContentsMargins(self.group_margin_left,
+                                   self.group_margin_top,
+                                   self.group_margin_right,
+                                   self.group_margin_bottom)
+        gl_crop.setHorizontalSpacing(self.h_space)
+        gl_crop.setVerticalSpacing(self.v_space)
+
+        self.edt_ystart = QLineEdit("0")
+        self.edt_ystop = QLineEdit("-1")
+        self.edt_xstart = QLineEdit("0")
+        self.edt_xstop = QLineEdit("-1")
+
+        gl_crop.addWidget(QLabel("Y-Start:"), 0, 0)
+        gl_crop.addWidget(self.edt_ystart, 0, 1)
+        gl_crop.addWidget(QLabel("Y-Stop (-1):"), 0, 2)
+        gl_crop.addWidget(self.edt_ystop, 0, 3)
+        gl_crop.addWidget(QLabel("X-Start:"), 1, 0)
+        gl_crop.addWidget(self.edt_xstart, 1, 1)
+        gl_crop.addWidget(QLabel("X-Stop (-1):"), 1, 2)
+        gl_crop.addWidget(self.edt_xstop, 1, 3)
+
         gl_crop.setColumnStretch(0, 0)
         gl_crop.setColumnStretch(1, 0)
         gl_crop.setColumnStretch(2, 0)
         gl_crop.setColumnStretch(3, 0)
         gl_crop.setColumnStretch(4, 1)
 
-        gl_crop.addWidget(QLabel("Y-Start:"), 0, 0)
-        self.edt_ystart = QLineEdit("0")
-        gl_crop.addWidget(self.edt_ystart, 0, 1)
-
-        gl_crop.addWidget(QLabel("Y-Stop (-1):"), 0, 2)
-        self.edt_ystop = QLineEdit("-1")
-        gl_crop.addWidget(self.edt_ystop, 0, 3)
-
-        gl_crop.addWidget(QLabel("X-Start:"), 1, 0)
-        self.edt_xstart = QLineEdit("0")
-        gl_crop.addWidget(self.edt_xstart, 1, 1)
-
-        gl_crop.addWidget(QLabel("X-Stop (-1):"), 1, 2)
-        self.edt_xstop = QLineEdit("-1")
-        gl_crop.addWidget(self.edt_xstop, 1, 3)
         layout.addWidget(grp_crop)
 
         # ---------------- Rescaling ----------------
         grp_rescale = QGroupBox("Rescaling")
         gl_resc = QGridLayout(grp_rescale)
-        gl_resc.setContentsMargins(UI_MARGIN_S, UI_MARGIN_S, UI_MARGIN_S,
-                                   UI_MARGIN_S)
-        gl_resc.setHorizontalSpacing(UI_SPACING_S)
-        gl_resc.setVerticalSpacing(UI_SPACING_S)
+        gl_resc.setContentsMargins(self.group_margin_left,
+                                   self.group_margin_top,
+                                   self.group_margin_right,
+                                   self.group_margin_bottom)
+        gl_resc.setHorizontalSpacing(self.h_space)
+        gl_resc.setVerticalSpacing(self.v_space)
 
         self.combo_rescale = QComboBox()
         self.combo_rescale.addItems(["None", "8-bit", "16-bit"])
+        self.combo_rescale.setFixedWidth(self.combo_width)
+        self.combo_rescale.setFixedHeight(BTN_H)
+
+        self.edt_minp = QLineEdit("0")
+        self.edt_maxp = QLineEdit("100")
+        self.edt_samp = QLineEdit("10")
+
         gl_resc.addWidget(QLabel("Rescale to:"), 0, 0)
         gl_resc.addWidget(self.combo_rescale, 0, 1)
-
         gl_resc.addWidget(QLabel("Min %:"), 1, 0)
-        self.edt_minp = QLineEdit("0")
         gl_resc.addWidget(self.edt_minp, 1, 1)
-
         gl_resc.addWidget(QLabel("Max %:"), 1, 2)
-        self.edt_maxp = QLineEdit("100")
         gl_resc.addWidget(self.edt_maxp, 1, 3)
-
         gl_resc.addWidget(QLabel("Sample Step:"), 1, 4)
-        self.edt_samp = QLineEdit("10")
         gl_resc.addWidget(self.edt_samp, 1, 5)
+
+        gl_resc.setColumnStretch(0, 0)
+        gl_resc.setColumnStretch(1, 0)
+        gl_resc.setColumnStretch(2, 0)
+        gl_resc.setColumnStretch(3, 0)
+        gl_resc.setColumnStretch(4, 0)
+        gl_resc.setColumnStretch(5, 0)
         layout.addWidget(grp_rescale)
 
         # ---------------- Run ----------------
         h_run = QHBoxLayout()
-        h_run.setContentsMargins(UI_MARGIN_S, UI_MARGIN_S, UI_MARGIN_S,
-                                 UI_MARGIN_S)
-        h_run.setSpacing(UI_SPACING_S)
-
+        h_run.setContentsMargins(self.group_margin_left, 2, 0, 2)
+        h_run.setSpacing(self.h_space)
         h_run.addWidget(QLabel("Prefix:"))
         self.edt_prefix = QLineEdit("img")
         self.edt_prefix.setAlignment(Qt.AlignLeft)
+        self.edt_prefix.setFixedWidth(self.input_width)
+        self.edt_prefix.setFixedHeight(BTN_H)
         h_run.addWidget(self.edt_prefix)
-        h_run.addStretch(0)
+        h_run.addStretch(1)
 
         self.btn_export = QPushButton("Export")
-        self.btn_export.setFixedWidth(150)
+        self.btn_export.setObjectName("PrimaryBtn")
+        self.btn_export.setFixedWidth(self.export_width)
+        self.btn_export.setFixedHeight(BTN_H)
         self.btn_export.clicked.connect(self.run_export)
         h_run.addWidget(self.btn_export)
-
         layout.addLayout(h_run)
 
         self.lbl_status = QLabel(f"Shape: {self.shape}")
+        self.lbl_status.setContentsMargins(self.group_margin_left, 0,
+                                           self.group_margin_right, 0)
         layout.addWidget(self.lbl_status)
 
         for w in (
@@ -2604,6 +3091,7 @@ class ExportDialog(BaseWindow):
         ):
             w.setAlignment(Qt.AlignLeft)
             w.setFixedWidth(self.input_width)
+            w.setFixedHeight(BTN_H)
 
         self.adjustSize()
         self.setMinimumSize(self.sizeHint())
@@ -2800,20 +3288,42 @@ class DatviewMainWindow(QMainWindow):
         main_layout.setSpacing(UI_SPACING_L)
 
         header = QWidget()
+        header.setObjectName("AppHeader")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(UI_MARGIN_M, 0, 0, 0)
-        header_layout.setSpacing(UI_SPACING_L)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(UI_SPACING_S)
 
-        title = QLabel("Current base: ")
+        title = QLabel("Base Folder: ")
+        title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        title.setObjectName("HeaderDimLabel")
         self.lbl_base_folder = QLabel(str(self.base_folder))
+        self.lbl_base_folder.setObjectName("HeaderPathLabel")
         self.lbl_base_folder.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-        btn_select_folder = QPushButton("Select Base Folder")
+        btn_select_folder = QPushButton("Select Folder")
+        btn_select_folder.setFixedHeight(BTN_H)
+        btn_select_folder.setFixedWidth(120)
+        btn_select_folder.setObjectName("AccentOutlineBtn")
         btn_select_folder.clicked.connect(self.select_base_folder)
 
-        header_layout.addWidget(title, 0)
+        # Theme switcher dropdown
+        lbl_theme = QLabel("Theme")
+        lbl_theme.setObjectName("HeaderDimLabel")
+        lbl_theme.setToolTip("Switch colour theme")
+        self.combo_theme = QComboBox()
+        self.combo_theme.addItems(list(THEMES.keys()))  # ["Light", "Dark"]
+        self.combo_theme.setFixedHeight(BTN_H)
+        self.combo_theme.setFixedWidth(120)
+        self.combo_theme.setToolTip("Switch colour theme")
+        # will be set to saved theme after window construction
+        self.combo_theme.currentTextChanged.connect(self.on_theme_changed)
+
+        header_layout.addWidget(title, 0, Qt.AlignVCenter)
         header_layout.addWidget(self.lbl_base_folder, 1)
         header_layout.addWidget(btn_select_folder, 0)
+        header_layout.addSpacing(UI_MARGIN_S)
+        header_layout.addWidget(lbl_theme, 0)
+        header_layout.addWidget(self.combo_theme, 0)
 
         main_layout.addWidget(header, 0, 0, 1, 3)
 
@@ -2832,7 +3342,7 @@ class DatviewMainWindow(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(UI_SPACING_M)
+        right_layout.setSpacing(0)
 
         # File list
         self.list_files = QListWidget()
@@ -2843,12 +3353,14 @@ class DatviewMainWindow(QMainWindow):
             self.on_file_context_menu)
         right_layout.addWidget(self.list_files, 1)
 
-        actions_group = QGroupBox("")
+        actions_group = QFrame()
+        actions_group.setObjectName("ActionsBar")
+
         vs_layout = QGridLayout(actions_group)
-        vs_layout.setContentsMargins(UI_MARGIN_S, UI_MARGIN_S, UI_MARGIN_S,
-                                     UI_MARGIN_S)
+        vs_layout.setContentsMargins(UI_MARGIN_S, UI_MARGIN_M,
+                                     0, 0)
         vs_layout.setHorizontalSpacing(UI_SPACING_M)
-        vs_layout.setVerticalSpacing(UI_SPACING_M)
+        vs_layout.setVerticalSpacing(0)
 
         btn_inter = QPushButton("Interactive Viewer")
         btn_inter.setToolTip(
@@ -2901,9 +3413,28 @@ class DatviewMainWindow(QMainWindow):
 
         self.populate_tree_root()
 
+    def on_theme_changed(self, theme_name: str):
+        """Apply the selected theme and refresh open viewer histogram
+        backgrounds."""
+        app = QApplication.instance()
+        if app is None:
+            return
+        apply_theme(app, theme_name)
+        # Refresh histogram backgrounds in already-open viewer windows
+        pg_bg = pg.mkColor(sel_theme["SURFACE"])
+        for v in self.viewers:
+            if hasattr(v, "imv") and v.imv is not None:
+                try:
+                    v.imv.getHistogramWidget().setBackground(pg_bg)
+                except Exception:
+                    pass
+        # Persist choice alongside the last folder
+        cfg = {"last_folder": str(self.base_folder), "theme": theme_name}
+        save_config(cfg)
+
     def _init_statusbar(self):
         sb = QStatusBar(self)
-        sb.setSizeGripEnabled(True)
+        sb.setSizeGripEnabled(False)
         self.setStatusBar(sb)
         sb.showMessage("Ready")
 
@@ -3495,7 +4026,7 @@ class DatviewMainWindow(QMainWindow):
                                             "2D arrays.")
                 return
             # Too large -> show as image instead of table
-            if data.size > TABLE_SIZE_CUTOFF:
+            if data.size > TABLE_SIZE_CUTOFF and len(data.shape) == 2:
                 info = " !!!Display as image instead table due to size!!!"
                 win = Viewer2DWindow(
                     self,
@@ -3735,8 +4266,18 @@ def main():
 
     app.setApplicationName(APP_NAME)
     app.setFont(select_ui_font(point_size=FONT_SIZE, weight=QFont.Normal))
-    apply_app_theme(app)
+    # Load saved theme (default Light)
+    config_data = load_config()
+    saved_theme = "Light"
+    if config_data and "theme" in config_data:
+        if config_data["theme"] in THEMES:
+            saved_theme = config_data["theme"]
+    apply_theme(app, saved_theme)
     win = DatviewMainWindow(base_folder)
+    # Restore theme combo
+    win.combo_theme.blockSignals(True)
+    win.combo_theme.setCurrentText(saved_theme)
+    win.combo_theme.blockSignals(False)
     win.show()
 
     try:

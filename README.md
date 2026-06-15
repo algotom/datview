@@ -13,7 +13,7 @@ Motivation
 ==========
 
 For synchrotron-based tomography, users need convenient tools to view their 
-data, typically in TIF, HDF, or CINE format during experiments, along with 
+data, typically in text, TIF, HDF, or CINE format during experiments, along with 
 basic assessment tools such as contrast adjustment, zooming, line-profile 
 viewing, histograms, image statistics, or percentile density. However, at synchrotron facilities, 
 where Linux OS and open-source software are the primary tools, users often need to switch 
@@ -24,12 +24,8 @@ This separation of tools is inconvenient, especially since many users are not fa
 with the Linux OS. **DatView** provides a unified GUI for all these tasks, improving 
 efficiency and user experience. **DatView** runs across operating systems.
 
-Design Philosophy
-=================
-
-DatView has been developed following two key guidelines:
--   Minimize dependencies and the codebase.
--   Maximize functionality and maintainability.
+Design
+======
 
 For distributing the software through Pip and Conda, the software is structured 
 based on the RUI (Rendering-Utilities-Interactions) concept, which is a user-friendly 
@@ -67,7 +63,6 @@ Features
     ![Fig5](https://github.com/algotom/datview/raw/main/figs/fig5.png)
 
 -   Interactive viewing of TIF files in a folder or frames of a CINE file.
-
 -   Interactive viewing of common image formats (JPG, PNG, TIF, ...).
 -   Viewing 1D or 2D datasets of an HDF file in table format.
 -   Opening multiple interactive viewers simultaneously.

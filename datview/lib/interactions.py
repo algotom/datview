@@ -9,12 +9,13 @@ import sys
 import json
 import threading
 from pathlib import Path
-import numpy as np
 import h5py
+import numpy as np
 from PIL import Image
+import pyqtgraph as pg
 from PySide6.QtCore import QObject, Qt, QTimer
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, \
-    QTreeWidgetItem, QInputDialog, QLineEdit
+from PySide6.QtWidgets import (QApplication, QFileDialog, QMessageBox,
+                               QTreeWidgetItem, QInputDialog, QLineEdit)
 
 import datview.lib.rendering as ren
 import datview.lib.utilities as util
@@ -29,12 +30,16 @@ class DatviewInteraction(QObject):
         self.app.setApplicationName(util.APP_NAME)
         self.app.setFont(ren.select_ui_font(point_size=util.FONT_SIZE,
                                             weight=util.FONT_WEIGHT))
-        ren.apply_app_theme(self.app)
+        # Load saved theme (default Light)
+        config_data = util.load_config()
+        saved_theme = "Light"
+        if config_data and "theme" in config_data:
+            if config_data["theme"] in ren.THEMES:
+                saved_theme = config_data["theme"]
+        ren.apply_theme(self.app, saved_theme)
 
         if base_folder is None:
-            cfg = util.load_config()
-            if cfg:
-                base_folder = cfg.get("last_folder")
+            base_folder = config_data.get("last_folder") if config_data else None
             if not base_folder:
                 base_folder = os.path.expanduser("~")
 
@@ -43,6 +48,10 @@ class DatviewInteraction(QObject):
             self.base_folder = Path.home()
 
         self.main_win = ren.DatviewMainWindow(str(self.base_folder))
+        # Restore theme combo
+        self.main_win.combo_theme.blockSignals(True)
+        self.main_win.combo_theme.setCurrentText(saved_theme)
+        self.main_win.combo_theme.blockSignals(False)
         self.active_viewer = None
         self.viewers = []
         self.current_table = None
@@ -57,6 +66,7 @@ class DatviewInteraction(QObject):
     def _wire_signals(self):
         """Wire UI signals to controller slots."""
         self.main_win.sig_browse_requested.connect(self.select_base_folder)
+        self.main_win.sig_theme_changed.connect(self.on_theme_changed)
         self.main_win.sig_folder_selected.connect(self.on_folder_select)
         self.main_win.sig_file_select_changed.connect(
             self.on_file_select_change)
@@ -83,7 +93,23 @@ class DatviewInteraction(QObject):
             self.populate_tree_root()
             self.main_win.combo_hdf.clear()
             self.main_win.combo_hdf.setEnabled(False)
-            util.save_config({"last_folder": str(self.base_folder)})
+            theme_name = self.main_win.combo_theme.currentText()
+            util.save_config({"last_folder": str(self.base_folder), "theme": theme_name})
+
+    def on_theme_changed(self, theme_name: str):
+        """Apply the selected theme and refresh open viewer backgrounds."""
+        if not self.app:
+            return
+        ren.apply_theme(self.app, theme_name)
+        pg_bg = pg.mkColor(ren.sel_theme["SURFACE"])
+        for v in self.viewers:
+            if hasattr(v, "imv") and v.imv is not None:
+                try:
+                    v.imv.getHistogramWidget().setBackground(pg_bg)
+                except Exception:
+                    pass
+        cfg = {"last_folder": str(self.base_folder), "theme": theme_name}
+        util.save_config(cfg)
 
     def populate_tree_root(self):
         self.main_win.tree.clear()
@@ -379,8 +405,8 @@ class DatviewInteraction(QObject):
         try:
             img = util.load_image(path)
             win = ren.Viewer2DWindow(self,
-                                     title=f"Viewing: {os.path.basename(path)}. "
-                                           f"(Height, Width) = {img.shape}",
+                                     title=f"Viewing: {os.path.basename(path)}."
+                                           f" (Height, Width) = {img.shape}",
                                      image=img, file_path=path)
             win.parent_app = self
             self._show_window(win)
@@ -599,7 +625,7 @@ class DatviewInteraction(QObject):
                                             "2D arrays.")
                 return
             # Too large -> show as image instead of table
-            if data.size > util.TABLE_SIZE_CUTOFF:
+            if data.size > util.TABLE_SIZE_CUTOFF and len(data.shape) == 2:
                 info = " !!!Display as image instead table due to size!!!"
                 win = ren.Viewer2DWindow(
                     self,

@@ -19,7 +19,7 @@ except ImportError:
     pass
 
 APP_NAME = "DatView"
-FONT_SIZE = 13
+FONT_SIZE = 14
 FONT_WEIGHT = "normal"
 MAIN_WIN_RATIO = 0.8
 TEXT_WIN_RATIO = 0.7
@@ -34,17 +34,17 @@ SCROLL_SENSITIVITY = 1
 
 UI_MARGIN_XS = 2
 UI_MARGIN_S = 4
-UI_MARGIN_M = 8
+UI_MARGIN_M = 6
 UI_MARGIN_L = 10
 UI_SPACING_S = 2
 UI_SPACING_M = 4
 UI_SPACING_L = 8
 
-BTN_H = 35
+BTN_H = 32
 HIST_MIN_W = 130
 HIST_MAX_W = 200
-TREE_MIN_W = 280
-TABLE_ROW_H = 25
+TREE_MIN_W = 270
+TABLE_ROW_H = 24
 
 # Data display logic constants
 HIST_NUM_BINS = 256
@@ -145,6 +145,7 @@ CINE_LOOKUP_TABLE = np.array([
     4095, 4095, 4095, 4095])
 
 logger = logging.getLogger(APP_NAME)
+
 
 def load_image(file_path, average=False):
     """Load an image and convert it to a 2D/3D array"""
@@ -711,7 +712,8 @@ def get_file_created_size_lines(full_path: str):
             created_ts = st.st_ctime
             created_label = "Changed"
 
-        created_str = datetime.datetime.fromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M:%S")
+        created_str = datetime.datetime.fromtimestamp(created_ts).strftime(
+            "%Y-%m-%d %H:%M:%S")
 
         size_bytes = int(getattr(st, "st_size", 0))
         size_str = format_bytes(size_bytes)
@@ -722,7 +724,8 @@ def get_file_created_size_lines(full_path: str):
         )
     except Exception as e:
         try:
-            logger.debug(f"get_file_created_size_lines failed for {full_path}: {e}")
+            logger.debug(
+                f"get_file_created_size_lines failed for {full_path}: {e}")
         except Exception:
             pass
         return None

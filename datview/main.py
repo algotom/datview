@@ -3,6 +3,7 @@ import sys
 import signal
 import argparse
 from PySide6.QtCore import QTimer
+from datview import __version__
 import datview.lib.utilities as util
 from datview.lib.interactions import DatviewInteraction
 from datview import __version__
