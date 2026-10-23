@@ -2496,7 +2496,8 @@ class InteractiveViewerWindow(BaseWindow):
         self.lbl_aspect.setFixedWidth(max_w)
         self.lbl_aspect.setFixedHeight(BTN_H)
         self.combo_aspect.setFixedWidth(max_w)
-        self.lbl_slice0.setFixedWidth(max_w)
+        if hasattr(self, "lbl_slice0"):
+            self.lbl_slice0.setFixedWidth(max_w)
         if self.lbl_slice1 is not None:
             self.lbl_slice1.setFixedWidth(max_w)
 
@@ -2613,7 +2614,10 @@ class InteractiveViewerWindow(BaseWindow):
 
     def perform_update(self):
         axis = self.viewer_state["axis"]
-        index = self.slider0.value() if axis == 0 else self.slider1.value()
+        if axis == 0:
+            index = self.slider0.value() if hasattr(self, 'slider0') else 0
+        else:
+            index = self.slider1.value() if hasattr(self, 'slider1') else 0
         prev = self.viewer_state.get("image")
         prev_shape = prev.shape[:2] if (
                 prev is not None and hasattr(prev, "shape")) else None
