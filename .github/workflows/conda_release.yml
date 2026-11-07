@@ -20,15 +20,16 @@ jobs:
         uses: conda-incubator/setup-miniconda@v4
         with:
           miniforge-version: "latest"
-          python-version: "3.11"
-          activate-environment: build
+          auto-activate: true
+          activate-environment: ""
           channels: conda-forge
           channel-priority: strict
           conda-remove-defaults: true
 
       - name: Install Conda Build Tools
         run: |
-          conda install -y conda-build anaconda-client
+          conda install -n base -y conda-build anaconda-client
+          conda build --version
 
       - name: Build Conda Package
         run: |
